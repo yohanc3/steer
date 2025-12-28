@@ -2,37 +2,36 @@ import "./App.css";
 import LoginButton from "./components/LoginButton";
 import { useAuth0 } from "@auth0/auth0-react";
 import Dashboard from "./components/Dashboard";
-import { useUserStore } from "./store/userStore";
-import { useEffect } from "react";
+import { type BaseUser } from "./store/userStore";
 
 function App() {
   const { user: auth0User, isLoading, isAuthenticated } = useAuth0();
-  const setUser = useUserStore((state) => state.setUser);
-  const clearUser = useUserStore((state) => state.clearUser);
-
-  useEffect(() => {
-    if (isAuthenticated && auth0User) {
-      setUser({
-        email: auth0User.email!,
-        name: auth0User.name,
-        picture: auth0User.picture,
-      });
-    } else {
-      clearUser();
-    }
-  }, [isAuthenticated, auth0User, setUser, clearUser]);
+  console.log("auth0 user: ", auth0User);
 
   if (isLoading) {
     return <div>Loading...</div>;
   }
 
-  if (!isAuthenticated || !auth0User) {
+  if (
+    !isAuthenticated ||
+    !auth0User ||
+    !auth0User.email ||
+    !auth0User.name ||
+    !auth0User.picture
+  ) {
     return <LoginButton />;
   }
 
+  const user: BaseUser = {
+    email: auth0User.email,
+    name: auth0User.name,
+    picture: auth0User.picture,
+    userID: auth0User?.sub || auth0User.email
+  };
+
   return (
     <main>
-      <Dashboard />
+      <Dashboard user={user} />
     </main>
   );
 }

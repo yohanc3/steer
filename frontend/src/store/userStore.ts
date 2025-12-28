@@ -1,9 +1,10 @@
 import { create } from "zustand";
 
-type BaseUser = {
+export type BaseUser = {
   email: string;
-  name: string | undefined;
-  picture: string | undefined;
+  name: string;
+  picture: string;
+  userID: string;
 };
 
 interface UserState {
@@ -13,8 +14,7 @@ interface UserState {
 }
 
 export const useUserStore = create<UserState>((set) => ({
-  user: { name: "", email: "", picture: "" },
+  user: { name: "", email: "", picture: "", userID: ""},
   setUser: (user: BaseUser) => set({ user }),
-  clearUser: () => set({ user: { name: "", email: "", picture: "" } }),
-  
+  clearUser: () => set({ user: { name: "", email: "", picture: "", userID: ""} }),
 }));

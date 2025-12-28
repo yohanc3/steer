@@ -4,7 +4,7 @@ import "net/http"
 
 // Adds basic needed CORS permission headers to incoming requests from local port 5173.
 // Returns an HTTP Handler, which carries the CORS permissions.
-func addCorsMiddleware(next http.Handler) http.Handler {
+func AddCorsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")

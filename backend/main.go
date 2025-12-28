@@ -18,7 +18,6 @@ Execution flow:
 Good to know:
 1. The program waits for the parent context Done() signal to trigger the graceful shutdown
 2. Shutdown gives 10 seconds to the server to close all connections
-3. 
 
 */
 
@@ -35,16 +34,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// All dependencies are given & used here when generating a Handler
 func NewServer(logger *slog.Logger, db *sql.DB) http.Handler {
 
 	var mux *http.ServeMux = http.NewServeMux()
-	addRoutes(mux, logger, db)
+	AddRoutes(mux, logger, db)
 
 	var handler http.Handler = mux
-	handler = addCorsMiddleware(handler)
+	handler = AddCorsMiddleware(handler)
 
 	return handler
 }
@@ -54,9 +55,15 @@ func run(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
+	err := godotenv.Load()
+
+	if err != nil {
+	 panic(".env file not loaded correctly")
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	db, db_err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
-
+	fmt.Println("database url: ", os.Getenv("DATABASE_URL"))
 	if db_err != nil {
 		panic(fmt.Sprintf("Unable to initialize database. Error: %s", db_err))
 	}
@@ -79,9 +86,9 @@ func run(ctx context.Context) error {
 	}()
 
 	var wg sync.WaitGroup
-	// Let our wait-group know that we have 1 go routine still running
+	// Let our wait group know that we have 1 go routine still running
 	wg.Add(1)
-	
+
 	// Set up shutdown watcher go routine
 	go func(){
 		defer wg.Done()

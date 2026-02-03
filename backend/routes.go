@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"net/http"
 )
@@ -16,10 +15,10 @@ type User struct {
 }
 
 func AddRoutes(mux *http.ServeMux, logger *slog.Logger, db *sql.DB) {
-	mux.Handle("/user/{id}", create_user(logger, db))
+	mux.Handle("/user/{id}", CreateUser(logger, db))
 }
 
-func create_user(logger *slog.Logger, db *sql.DB) http.Handler {
+func CreateUser(logger *slog.Logger, db *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		user, err := decode[User](r, logger)
@@ -28,10 +27,6 @@ func create_user(logger *slog.Logger, db *sql.DB) http.Handler {
 			logger.Error("Error when decoding user.")
 			http.Error(w, "Error when decoding user.", http.StatusBadRequest)
 			return
-		}
-	
-		for key, value := range r.Header {
-			fmt.Printf("key: %s value: %s\n", key, value)
 		}
 		
 		ctx, cancel := context.WithCancel(r.Context())

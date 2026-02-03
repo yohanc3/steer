@@ -38,16 +38,23 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+var config *Config
+
 // All dependencies are given & used here when generating a Handler
-func NewServer(logger *slog.Logger, db *sql.DB) http.Handler {
+func NewServer(logger *slog.Logger, db *sql.DB) (http.Handler, error) {
 
 	var mux *http.ServeMux = http.NewServeMux()
 	AddRoutes(mux, logger, db)
 
 	var handler http.Handler = mux
+	handler, err := AddAccessTokenMiddleware(handler)
 	handler = AddCorsMiddleware(handler)
 
-	return handler
+	if err != nil {
+		return nil, err
+	}
+
+	return handler, nil
 }
 
 func run(ctx context.Context) error {
@@ -55,19 +62,35 @@ func run(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
 	err := godotenv.Load()
 
 	if err != nil {
 		panic(".env file not loaded correctly")
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	db, db_err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
-	if db_err != nil {
-		panic(fmt.Sprintf("Unable to initialize database. Error: %s", db_err))
+	loadedConfig, err := LoadConfig()
+	if err != nil {
+		panic(err)
 	}
 
-	server := NewServer(logger, db)
+	config = loadedConfig
+
+	logger.Debug("Config properly loaded up.")
+	logger.Debug(fmt.Sprintf("Initializing database with url: %s.", config.DatabaseURL))
+
+	db, err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic(fmt.Sprintf("Unable to initialize database. Error: %s", err))
+	}
+
+	server, err := NewServer(logger, db)
+	if err != nil {
+		panic(fmt.Errorf("Error when setting up server: %s", err))
+	}
 
 	httpServer := &http.Server{
 		Addr:    ":8080",

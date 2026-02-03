@@ -29,9 +29,11 @@ func create_user(logger *slog.Logger, db *sql.DB) http.Handler {
 			http.Error(w, "Error when decoding user.", http.StatusBadRequest)
 			return
 		}
-
-		fmt.Println("response json: ", user)
-
+	
+		for key, value := range r.Header {
+			fmt.Printf("key: %s value: %s\n", key, value)
+		}
+		
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 

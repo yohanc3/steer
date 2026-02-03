@@ -58,12 +58,11 @@ func run(ctx context.Context) error {
 	err := godotenv.Load()
 
 	if err != nil {
-	 panic(".env file not loaded correctly")
+		panic(".env file not loaded correctly")
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	db, db_err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
-	fmt.Println("database url: ", os.Getenv("DATABASE_URL"))
 	if db_err != nil {
 		panic(fmt.Sprintf("Unable to initialize database. Error: %s", db_err))
 	}
@@ -71,18 +70,19 @@ func run(ctx context.Context) error {
 	server := NewServer(logger, db)
 
 	httpServer := &http.Server{
-		Addr: ":8080",
+		Addr:    ":8080",
 		Handler: server,
 	}
 
 	// Go routine that starts the server
-	go func(){
+	go func() {
 		fmt.Fprintf(os.Stdout, "Listening on port %s\n", httpServer.Addr)
 
 		// Start listening if the returned error is not a bad
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "Error listening and serving %s\n", err)
 		}
+
 	}()
 
 	var wg sync.WaitGroup
@@ -90,13 +90,14 @@ func run(ctx context.Context) error {
 	wg.Add(1)
 
 	// Set up shutdown watcher go routine
-	go func(){
+	go func() {
 		defer wg.Done()
 
 		// Hold until the parent context is interrupted (server is unmounted)
 		<-ctx.Done()
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+		// Release resources after 10 seconds, for procesees that take longer to complete
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -110,7 +111,7 @@ func run(ctx context.Context) error {
 
 }
 
-func main(){
+func main() {
 
 	parentCtx := context.Background()
 

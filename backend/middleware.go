@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"yohanc3/steer/auth"
+	"yohanc3/steer/config"
 )
 
 // Adds basic needed CORS permission headers to incoming requests from local port 5173.
@@ -27,7 +28,7 @@ func AddCorsMiddleware(next http.Handler) http.Handler {
 
 func AddAccessTokenMiddleware(next http.Handler) (http.Handler, error) {
 
-	jwtValidator, err := auth.NewValidator(config.Domain, config.Audience)
+	jwtValidator, err := auth.NewValidator(config.Cfg.Auth0Domain, config.Cfg.Auth0Audience)
 	if err != nil {
 		return nil, err
 	}
@@ -37,5 +38,16 @@ func AddAccessTokenMiddleware(next http.Handler) (http.Handler, error) {
 		return nil, err
 	}
 
-	return middleware.CheckJWT(next), nil
+ 	jwtHandler := middleware.CheckJWT(next)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+
+		if r.URL.Path == "/bot" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		jwtHandler.ServeHTTP(w, r)
+	}), nil
+		
 }

@@ -33,23 +33,28 @@ import (
 	"os/signal"
 	"sync"
 	"time"
+	"yohanc3/steer/config"
+	"yohanc3/steer/telegrambot"
 
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var config *Config
-
 // All dependencies are given & used here when generating a Handler
-func NewServer(logger *slog.Logger, db *sql.DB) (http.Handler, error) {
+func NewServer(logger *slog.Logger, db *sql.DB, ctx context.Context) (http.Handler, error) {
 
 	var mux *http.ServeMux = http.NewServeMux()
 	AddRoutes(mux, logger, db)
 
-	var handler http.Handler = mux
-	handler, err := AddAccessTokenMiddleware(handler)
-	handler = AddCorsMiddleware(handler)
+	err := telegrambot.SetupBot(mux, ctx)
+	if err != nil {
+		return nil, err
+	}
 
+	var handler http.Handler = mux
+	handler, err = AddAccessTokenMiddleware(handler)
+	handler = AddCorsMiddleware(handler)
+	
 	if err != nil {
 		return nil, err
 	}
@@ -72,22 +77,19 @@ func run(ctx context.Context) error {
 		panic(".env file not loaded correctly")
 	}
 
-	loadedConfig, err := LoadConfig()
+	err = config.LoadConfig()
 	if err != nil {
 		panic(err)
 	}
 
-	config = loadedConfig
-
-	logger.Debug("Config properly loaded up.")
-	logger.Debug(fmt.Sprintf("Initializing database with url: %s.", config.DatabaseURL))
+	fmt.Println("Config properly loaded up.")
 
 	db, err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
 	if err != nil {
 		panic(fmt.Sprintf("Unable to initialize database. Error: %s", err))
 	}
 
-	server, err := NewServer(logger, db)
+	server, err := NewServer(logger, db, ctx)
 	if err != nil {
 		panic(fmt.Errorf("Error when setting up server: %s", err))
 	}

@@ -13,6 +13,7 @@ createRoot(document.getElementById("root")!).render(
       clientId={import.meta.env.VITE_AUTH0_CLIENT_ID}
       authorizationParams={{
         redirect_uri: window.location.origin,
+        audience: "http://localhost:8080/api"
       }}
       cacheLocation={import.meta.env.DEV ? "localstorage" : "memory"}
     >

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"net/http"
+	applog "yohanc3/steer/logger"
 )
 
 type User struct {
@@ -14,11 +14,11 @@ type User struct {
 	Picture string `json:"picture"`
 }
 
-func AddRoutes(mux *http.ServeMux, logger *slog.Logger, db *sql.DB) {
+func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB) {
 	mux.Handle("/user/{id}", CreateUser(logger, db))
 }
 
-func CreateUser(logger *slog.Logger, db *sql.DB) http.Handler {
+func CreateUser(logger *applog.Logger, db *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		user, err := decode[User](r, logger)

@@ -3,12 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
+	applog "yohanc3/steer/logger"
 )
 
 
-func decode[T any](r *http.Request, logger *slog.Logger) (T, error) {
+func decode[T any](r *http.Request, logger *applog.Logger) (T, error) {
 	var v T
 	
 	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {

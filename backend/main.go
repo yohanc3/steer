@@ -27,13 +27,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
 	"yohanc3/steer/config"
+	applog "yohanc3/steer/logger"
 	"yohanc3/steer/telegrambot"
 
 	"github.com/joho/godotenv"
@@ -41,20 +41,20 @@ import (
 )
 
 // All dependencies are given & used here when generating a Handler
-func NewServer(logger *slog.Logger, db *sql.DB, ctx context.Context) (http.Handler, error) {
+func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context) (http.Handler, error) {
 
 	var mux *http.ServeMux = http.NewServeMux()
 	AddRoutes(mux, logger, db)
 
-	err := telegrambot.SetupBot(mux, ctx)
+	var handler http.Handler = mux
+	handler, err := AddAccessTokenMiddleware(handler)
 	if err != nil {
 		return nil, err
 	}
 
-	var handler http.Handler = mux
-	handler, err = AddAccessTokenMiddleware(handler)
-	handler = AddCorsMiddleware(handler)
-	
+	AddCorsMiddleware(handler)
+
+	_, err = telegrambot.SetupBot(mux, ctx, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +66,8 @@ func run(ctx context.Context) error {
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
+	
+	logger := applog.NewLogger()
 
 	err := godotenv.Load()
 

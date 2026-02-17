@@ -10,26 +10,30 @@ import (
 	"github.com/mymmrac/telego"
 )
 
-func handleUserMessage(update *telego.Update) {
+// Handles updates, which are usually messages (hence the function name) 
+func handleUserMessage(ctx context.Context, update *telego.Update, bot *telego.Bot) {
 
-	fmt.Println("New update id:", update.UpdateID, "update messager name:", update.Message.From.FirstName, "update text:", update.Message.Text)
+	text := "Hi! This is SteerBot"
+	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: text})
 
 }
 
-func Worker(id uint16, updates <-chan telego.Update, logger *applog.Logger) {
+// Initializes a worker which will handle updates as they come. See handleUserMessage()
+func Worker(ctx context.Context, id uint16, updates <-chan telego.Update, bot *telego.Bot, logger *applog.Logger) {
 	for update := range updates {
 		logger.Debug(fmt.Sprintf("Worker of id %d processing update of id %d", id, update.UpdateID))
-		go handleUserMessage(&update)
+		go handleUserMessage(ctx, &update, bot)
 	}
 }
 
+// Adds a new webhook route to the mux. Initializes 5 workers to handle all updates (messages).
+// Returns a reference to the created bot.
 func SetupBot(mux *http.ServeMux, ctx context.Context, logger *applog.Logger) (*telego.Bot, error) {
 	bot, err := telego.NewBot(config.Cfg.TelegramBotToken, telego.WithLogger(logger)) 
 	if err != nil {
 		return nil, err
-
 	}
-
+	
 	_ = bot.SetWebhook(ctx, &telego.SetWebhookParams{
 		URL:         config.Cfg.ServerURL + "/bot",
 		SecretToken: bot.SecretToken(),
@@ -44,8 +48,9 @@ func SetupBot(mux *http.ServeMux, ctx context.Context, logger *applog.Logger) (*
 
 	var workersNum uint16 = 5
 
+	// Start all workers
 	for id := range workersNum {
-		go Worker(id, updates, logger)
+		go Worker(ctx, id, updates, bot, logger)
 	}
 
 	return bot, nil

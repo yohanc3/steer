@@ -52,7 +52,7 @@ func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context) (http.Han
 		return nil, err
 	}
 
-	AddCorsMiddleware(handler)
+	handler = AddCorsMiddleware(handler)
 
 	_, err = telegrambot.SetupBot(mux, ctx, logger)
 	if err != nil {

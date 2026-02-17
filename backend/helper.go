@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	applog "yohanc3/steer/logger"
 )
 
-
-func decode[T any](r *http.Request, logger *applog.Logger) (T, error) {
+// Decodes the body of an http request, and attempts to store it in a value of 
+// type T.
+//
+// Example: 
+// user, err := decode[User](r)
+func decode[T any](r *http.Request) (T, error) {
 	var v T
 	
 	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {

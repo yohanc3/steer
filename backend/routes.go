@@ -14,6 +14,7 @@ type User struct {
 	Picture string `json:"picture"`
 }
 
+// Adds all routes to a given multiplexer
 func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB) {
 	mux.Handle("/user/{id}", CreateUser(logger, db))
 }
@@ -21,7 +22,7 @@ func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB) {
 func CreateUser(logger *applog.Logger, db *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		user, err := decode[User](r, logger)
+		user, err := decode[User](r)
 
 		if err != nil {
 			logger.Error("Error when decoding user.")

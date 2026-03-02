@@ -1,22 +1,27 @@
-import { useAccessTokenStore } from "../store/useStore";
+import { useAuth0 } from "@auth0/auth0-react";
 
 const serverURL = import.meta.env.VITE_SERVER_BASE_URL;
 
-export async function apiFetch(endpoint: string, options: RequestInit) {
-  const accessToken = useAccessTokenStore.getState().accessToken
-  console.log("Sending req to: ", `${serverURL}/${endpoint} with access token: ${accessToken}`);
-  
+export function useAPIFetch() {
+  const { getAccessTokenSilently } = useAuth0();
 
-  const response = await fetch(`${serverURL}/${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-      ...options?.headers,
-    },
-  });
+  async function apiFetch(endpoint: string, options: RequestInit) {
+    const accessToken = await getAccessTokenSilently(); 
+    console.log("Sending req to: ", `${serverURL}/${endpoint} with access token: ${accessToken}`);
 
-  const res = await response.json();
+    const response = await fetch(`${serverURL}/${endpoint}`, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...options?.headers,
+      },
+      ...options,
+    });
 
-  return res;
+    const res = await response.json();
+
+    return res;
+  }
+
+  return { apiFetch };
 }

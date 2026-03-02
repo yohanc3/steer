@@ -13,7 +13,7 @@ import (
 // Handles updates, which are usually messages (hence the function name) 
 func handleUserMessage(ctx context.Context, update *telego.Update, bot *telego.Bot) {
 
-	text := "Hi! This is SteerBot"
+	text := "https://t.me/OfficialSteerBot?start=secretMysteriousToken"
 	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: text})
 
 }

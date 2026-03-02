@@ -19,10 +19,3 @@ export const useUserStore = create<UserState>((set) => ({
   clearUser: () => set({ user: { name: "", email: "", picture: "", userID: "" } }),
 }));
 
-export const useAccessTokenStore = create<{
-  accessToken: string;
-  setAccessToken: (accessToken: string) => void;
-}>((set) => ({
-  accessToken: "",
-  setAccessToken: (accessToken: string) => set({ accessToken }),
-}));

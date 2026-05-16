@@ -41,10 +41,10 @@ import (
 )
 
 // All dependencies are given & used here when generating a Handler
-func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context) (http.Handler, error) {
+func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context, telegramService *telegrambot.TelegramService) (http.Handler, error) {
 
 	var mux *http.ServeMux = http.NewServeMux()
-	AddRoutes(mux, logger, db)
+	AddRoutes(mux, logger, db, telegramService)
 
 	var handler http.Handler = mux
 	handler, err := AddAccessTokenMiddleware(handler)
@@ -54,7 +54,7 @@ func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context) (http.Han
 
 	handler = AddCorsMiddleware(handler)
 
-	_, err = telegrambot.SetupBot(mux, ctx, logger)
+	_, err = telegrambot.SetupBot(mux, ctx, logger, telegramService)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func run(ctx context.Context) error {
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
-	
+
 	logger := applog.NewLogger()
 
 	err := godotenv.Load()
@@ -87,7 +87,9 @@ func run(ctx context.Context) error {
 		panic(fmt.Sprintf("Unable to initialize database. Error: %s", err))
 	}
 
-	server, err := NewServer(logger, db, ctx)
+	telegramService := &telegrambot.TelegramService{Logger: logger, DB: db}
+
+	server, err := NewServer(logger, db, ctx, telegramService)
 	if err != nil {
 		panic(fmt.Errorf("Error when setting up server: %s", err))
 	}

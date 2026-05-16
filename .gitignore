@@ -3,3 +3,5 @@
 
 # Any .env file
 *.env
+
+.DS_Store

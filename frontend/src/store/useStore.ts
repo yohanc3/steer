@@ -1,21 +1,16 @@
+import type { User } from "@/types/types";
 import { create } from "zustand";
 
-export type BaseUser = {
-  email: string;
-  name: string;
-  picture: string | null;
-  userID: string;
-};
-
 interface UserState {
-  user: BaseUser;
-  setUser: (user: BaseUser) => void;
-  clearUser: () => void;
+    user: User;
+    setUser: (user: User) => void;
+    clearUser: () => void;
 }
 
-export const useUserStore = create<UserState>((set) => ({
-  user: { name: "", email: "", picture: "", userID: "" },
-  setUser: (user: BaseUser) => set({ user }),
-  clearUser: () => set({ user: { name: "", email: "", picture: "", userID: "" } }),
-}));
+const initialUser = { name: "", email: "", picture: "", ID: "", isConnectedToTelegram: false };
 
+export const useUserStore = create<UserState>((set) => ({
+    user: initialUser,
+    setUser: (user: User) => set({ user }),
+    clearUser: () => set({ user: initialUser }),
+}));

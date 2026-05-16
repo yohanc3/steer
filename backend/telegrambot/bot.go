@@ -4,36 +4,56 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"yohanc3/steer/config"
 	applog "yohanc3/steer/logger"
 
 	"github.com/mymmrac/telego"
 )
 
-// Handles updates, which are usually messages (hence the function name) 
-func handleUserMessage(ctx context.Context, update *telego.Update, bot *telego.Bot) {
+// Handles updates, which are usually messages (hence the function name)
+func handleUserMessage(ctx context.Context, update *telego.Update, bot *telego.Bot, telegramService *TelegramService, logger *applog.Logger) {
 
-	text := "https://t.me/OfficialSteerBot?start=secretMysteriousToken"
-	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: text})
+	user_text := update.Message.Text
+	response_text := ""
 
+	var err error
+
+	switch {
+		case strings.HasPrefix(user_text, "/start"):
+			err = telegramService.DeepLinkAccount(ctx, user_text, update.Message.Chat.ID)
+			response_text = "Account succesfully linked!"
+
+		default:
+			response_text = user_text
+	}
+
+	if err != nil {
+		err = fmt.Errorf("error when handling user message: %w", err)
+		logger.Error(err.Error())
+	}
+
+	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: response_text})
+	
+	return
 }
 
 // Initializes a worker which will handle updates as they come. See handleUserMessage()
-func Worker(ctx context.Context, id uint16, updates <-chan telego.Update, bot *telego.Bot, logger *applog.Logger) {
+func Worker(ctx context.Context, id uint16, updates <-chan telego.Update, bot *telego.Bot, logger *applog.Logger, telegramService *TelegramService) {
 	for update := range updates {
-		logger.Debug(fmt.Sprintf("Worker of id %d processing update of id %d", id, update.UpdateID))
-		go handleUserMessage(ctx, &update, bot)
+		logger.Debug(fmt.Sprintf("Worker %d processing update with id %d", id, update.UpdateID), "update_id", update.UpdateID)
+		go handleUserMessage(ctx, &update, bot, telegramService, logger)
 	}
 }
 
 // Adds a new webhook route to the mux. Initializes 5 workers to handle all updates (messages).
 // Returns a reference to the created bot.
-func SetupBot(mux *http.ServeMux, ctx context.Context, logger *applog.Logger) (*telego.Bot, error) {
-	bot, err := telego.NewBot(config.Cfg.TelegramBotToken, telego.WithLogger(logger)) 
+func SetupBot(mux *http.ServeMux, ctx context.Context, logger *applog.Logger, telegramService *TelegramService) (*telego.Bot, error) {
+	bot, err := telego.NewBot(config.Cfg.TelegramBotToken, telego.WithLogger(logger))
 	if err != nil {
 		return nil, err
 	}
-	
+
 	_ = bot.SetWebhook(ctx, &telego.SetWebhookParams{
 		URL:         config.Cfg.ServerURL + "/bot",
 		SecretToken: bot.SecretToken(),
@@ -50,7 +70,7 @@ func SetupBot(mux *http.ServeMux, ctx context.Context, logger *applog.Logger) (*
 
 	// Start all workers
 	for id := range workersNum {
-		go Worker(ctx, id, updates, bot, logger)
+		go Worker(ctx, id, updates, bot, logger, telegramService)
 	}
 
 	return bot, nil

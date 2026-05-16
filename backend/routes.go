@@ -1,82 +1,104 @@
 package main
 
 import (
-	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	applog "yohanc3/steer/logger"
+	telegram "yohanc3/steer/telegrambot"
 )
 
 type User struct {
-	ID      string `json:"userID"`
-	Name    string `json:"name"`
-	Email   string `json:"email"`
-	Picture string `json:"picture"`
+	ID                    string `json:"ID"`
+	Name                  string `json:"name"`
+	Email                 string `json:"email"`
+	Picture               string `json:"picture"`
+	IsConnectedToTelegram bool   `json:"isConnectedToTelegram"`
+}
+
+type appError struct {
+	Err         error
+	Message     string
+	MessageArgs []string
+	Code        int
+}
+
+type appHandler func(w http.ResponseWriter, r *http.Request) *appError
+
+func (err *appError) Error() string { return err.Err.Error() }
+
+func wrapHandler(logger *applog.Logger, handler appHandler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		if appErr := handler(w, r); appErr != nil {
+			http.Error(w, appErr.Message, appErr.Code)
+			logger.Debug(appErr.Err.Error(), appErr.MessageArgs)
+		}
+	})
 }
 
 // Adds all routes to a given multiplexer
-func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB) {
-	mux.Handle("/user/{id}", CreateUser(logger, db))
+func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB, telegramService *telegram.TelegramService) {
+
+	mux.Handle("POST /api/user", wrapHandler(logger, CreateUser(logger, db)))
+	mux.Handle("GET /api/user/{user_id}/telegram/connection-code", wrapHandler(logger, GetTelegramConnectionCode(logger, db, telegramService)))
 }
 
-func CreateUser(logger *applog.Logger, db *sql.DB) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// Frontend requests code to send to the Bot, which is linked in the backend to
+// their user, so when the Bot receives it, it sends it along with the conversation
+// id, which gets linked to the user so we know it's them.
+func GetTelegramConnectionCode(logger *applog.Logger, db *sql.DB, telegramService *telegram.TelegramService) appHandler {
+	return func(w http.ResponseWriter, r *http.Request) *appError {
+
+		user_id := r.PathValue("user_id")
+
+		if user_id == "" {
+			error := "Error when getting 'user_id' from path value."
+			return &appError{fmt.Errorf(error), "Bad Request.", []string{}, http.StatusBadRequest}
+		}
+
+		otp, err := telegramService.GetConnectionCode(r.Context(), user_id)
+
+		if err != nil {
+			return &appError{fmt.Errorf("error when sending user telegram connection code %w"), "Internal Server Error.", []string{"user_id", user_id}, http.StatusInternalServerError}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(otp)
+		logger.Debug("successfully sent telegram connection code", "user_id", user_id)
+
+		return nil
+
+	}
+}
+
+// Creates new user if doesn't exist. Returns populated user object.
+func CreateUser(logger *applog.Logger, db *sql.DB) appHandler {
+	return func(w http.ResponseWriter, r *http.Request) *appError {
 
 		user, err := decode[User](r)
+		fmt.Println("user id gotten is:" + user.ID)
 
 		if err != nil {
-			logger.Error("Error when decoding user.")
-			http.Error(w, "Error when decoding user.", http.StatusBadRequest)
-			return
+			return &appError{err, "Bad Request.", nil, http.StatusBadRequest}
 		}
-		
-		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
 
-		tx, err := db.Begin()
+		dbRow := db.QueryRowContext(r.Context(),
+			`INSERT INTO user (id, name, email, picture)
+			 VALUES (?, ?, ?, ?)
+		     ON CONFLICT(id) DO UPDATE SET id=id RETURNING (conversation_id IS NOT NULL) AS isConnectedToTelegram;`,
+			user.ID, user.Name, user.Email, user.Picture)
 
-		// Defer a rollback, so that it only runs if tx.Commit never occurs
-		defer tx.Rollback()
+		err = dbRow.Scan(&user.IsConnectedToTelegram)
 
 		if err != nil {
-			logger.Error("Initiaizing transaction failed.", "error", err.Error())
-			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
-			return
+			return &appError{err, "Internal Server Error.", []string{"user_id", user.ID}, http.StatusInternalServerError}
 		}
 
-		res, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO user (id, name, picture, email)
-			VALUES (?, ?, ?, ?)
-		`, user.ID, user.Name, user.Picture, user.Email)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(user)
 
-		if err != nil {
-			logger.Error("Inserting new user failed.", "error", err.Error())
-			http.Error(w, "Creating user failed.", http.StatusInternalServerError)
-			return
-		}
-		
-		// Check if a new row was created. Log message depends on whether new user row was created or ignored
-		rowsAffected, err := res.RowsAffected()
-
-		if err != nil {
-			logger.Error("Error retreiving affected rows from user insert.", "id", user.ID, "name", user.Name, "email", user.Email, "picture", user.Picture)
-			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		if rowsAffected <= 0 {
-			logger.Info("201 - User already registered.", "id", user.ID, "name", user.Name, "email", user.Email, "picture", user.Picture)
-		} else {
-			logger.Info("201 - New User registered.", "id", user.ID, "name", user.Name, "email", user.Email, "picture", user.Picture)
-		}
-
-		if err = tx.Commit(); err != nil {
-			logger.Error("Error commiting transaction into DB.", "id", user.ID, "name", user.Name, "email", user.Email, "picture", user.Picture)
-			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusCreated)
-
-	})
+		return nil
+	}
 }

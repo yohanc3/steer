@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 	applog "yohanc3/steer/logger"
 	customStrings "yohanc3/steer/strings"
@@ -19,7 +18,7 @@ type Code struct {
 
 type OTP struct {
 	ID int `json:"id"`
-	UserID int `json:"user_id"` 
+	UserID string `json:"user_id"` 
 	Code string `json:"code"`
 	ExpiresAt int `json:"expires_at"`  
 	CreatedAt int `json:"created_at"`
@@ -39,12 +38,6 @@ type TelegramService struct {
 func (tel *TelegramService) DeepLinkAccount(ctx context.Context, code string, conversation_id int64) error {
 
 	tel.Logger.Debug("deep linking account", "code", code)
-
-	if strings.HasPrefix(code, "/start connect-") {
-		code = strings.Replace(code, "/start connect-", "", 1)
-	} else {
-		return fmt.Errorf("deep-linking code doesn't start with prefix 'connect-': %w", )
-	}
 
 	tx, err := tel.DB.BeginTx(ctx, nil)
 	defer tx.Rollback()
@@ -67,7 +60,7 @@ func (tel *TelegramService) DeepLinkAccount(ctx context.Context, code string, co
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE user 
-		SET conversation_id = ?,
+		SET conversation_id = ?
 		WHERE id = ?
 	`, conversation_id, otp.UserID)
 
@@ -90,7 +83,6 @@ func (tel *TelegramService) DeepLinkAccount(ctx context.Context, code string, co
 // Retrieves a valid connection code.
 // A connection code is allows users to connect their accounts to a telegram conversation
 func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id string) (*Code, error) {
-	
 	// Start transactions
 	tx, err := tel.DB.BeginTx(ctx, nil)
 	defer tx.Rollback()
@@ -103,7 +95,7 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 	row := tx.QueryRowContext(ctx, `
 		SELECT code, expires_at FROM otp
 		WHERE user_id = ?
-		AND expires_at >= CURRENT_TIMESTAMP 
+		AND expires_at >= (unixepoch()) 
 		LIMIT 1`, user_id)
 
 	var otp *Code = &Code{}
@@ -119,7 +111,7 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 	// Upsert new valid otp to the database if the current one is invalid  
 	} else if err != nil && err == sql.ErrNoRows {
 
-		code := "connect-" + customStrings.RandomString(10)
+		code := customStrings.RandomString(10)
 		expires_at := time.Now().Add(time.Hour * 24).UnixMilli()
 		
 		// Insert otp into the database. If current user already has one, 
@@ -129,8 +121,8 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 			VALUES (?, ?, ?) 
 			ON CONFLICT (user_id)
 			DO UPDATE SET 
-				code = excluded.code,
-				expires_at = excluded.expires_at
+				code = EXCLUDED.code,
+				expires_at = EXCLUDED.expires_at
 			`, user_id, code, expires_at)
 
 		if err != nil {

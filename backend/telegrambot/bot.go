@@ -14,26 +14,29 @@ import (
 // Handles updates, which are usually messages (hence the function name)
 func handleUserMessage(ctx context.Context, update *telego.Update, bot *telego.Bot, telegramService *TelegramService, logger *applog.Logger) {
 
-	user_text := update.Message.Text
-	response_text := ""
+	userText := update.Message.Text
+	responseText := ""
 
 	var err error
 
 	switch {
-		case strings.HasPrefix(user_text, "/start"):
-			err = telegramService.DeepLinkAccount(ctx, user_text, update.Message.Chat.ID)
-			response_text = "Account succesfully linked!"
+		case strings.HasPrefix(userText, "/start"):
+			
+			code := strings.Replace(userText, "/start ", "", 1)
+			err = telegramService.DeepLinkAccount(ctx, code, update.Message.Chat.ID)
+			responseText = "Account succesfully linked!"
 
 		default:
-			response_text = user_text
+			responseText = userText
 	}
 
 	if err != nil {
 		err = fmt.Errorf("error when handling user message: %w", err)
+		responseText = "Something went wrong. Try again later." 
 		logger.Error(err.Error())
 	}
 
-	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: response_text})
+	bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: update.Message.Chat.ChatID(), Text: responseText})
 	
 	return
 }

@@ -28,9 +28,11 @@ type appHandler func(w http.ResponseWriter, r *http.Request) *appError
 
 func (err *appError) Error() string { return err.Err.Error() }
 
+// Wraps a route handler to log any returned error 
 func wrapHandler(logger *applog.Logger, handler appHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
+		// using a custom error allows us to handle any error returned
 		if appErr := handler(w, r); appErr != nil {
 			http.Error(w, appErr.Message, appErr.Code)
 			logger.Debug(appErr.Err.Error(), appErr.MessageArgs)

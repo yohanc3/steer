@@ -1,7 +1,10 @@
 # SQLite db
+*.sqlite
 *.db
 
 # Any .env file
 *.env
 
 .DS_Store
+.header*
+

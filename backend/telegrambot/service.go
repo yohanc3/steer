@@ -17,22 +17,21 @@ type Code struct {
 }
 
 type OTP struct {
-	ID int `json:"id"`
-	UserID string `json:"user_id"` 
-	Code string `json:"code"`
-	ExpiresAt int `json:"expires_at"`  
-	CreatedAt int `json:"created_at"`
+	ID        int    `json:"id"`
+	UserID    string `json:"user_id"`
+	Code      string `json:"code"`
+	ExpiresAt int    `json:"expires_at"`
+	CreatedAt int    `json:"created_at"`
 }
 
 type TelegramServiceInterface interface {
-	
-	GetConnectionCode(user_id int) (*Code, error) 
-	DeepLinkAccount(code string) (error)
+	GetConnectionCode(user_id int) (*Code, error)
+	DeepLinkAccount(code string) error
 }
 
 type TelegramService struct {
 	Logger *applog.Logger
-	DB *sql.DB
+	DB     *sql.DB
 }
 
 func (tel *TelegramService) DeepLinkAccount(ctx context.Context, code string, conversation_id int64) error {
@@ -67,16 +66,16 @@ func (tel *TelegramService) DeepLinkAccount(ctx context.Context, code string, co
 	if err != nil {
 		return fmt.Errorf("error when assigning user a conversation id: %w", err)
 	}
-	
+
 	err = tx.Commit()
 
 	if err != nil {
 		return fmt.Errorf("error when commiting after setting user's conversation id: %w", err)
- 	}
+	}
 
 	logger.Debug("Successfully set conversation id to user.", "user_id", otp.UserID, "conversation_id", conversation_id)
-	
-	return nil 
+
+	return nil
 
 }
 
@@ -90,8 +89,13 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 	if err != nil {
 		return nil, fmt.Errorf("error when starting db transaction for user: %s %w", user_id, err)
 	}
-	
-	// Select a valid Code   
+
+	// row := tx.QueryContext(ctx, `
+	// 	SELECT 
+	//
+	// 	`)
+
+	// Select a valid Code
 	row := tx.QueryRowContext(ctx, `
 		SELECT code, expires_at FROM otp
 		WHERE user_id = ?
@@ -101,20 +105,20 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 	var otp *Code = &Code{}
 
 	err = row.Scan(&otp.Code, &otp.ExpiresAt)
-	
+
 	// Return otp if scan is successful
 	if err == nil {
-		
+
 		tx.Commit()
 		return otp, nil
-	
-	// Upsert new valid otp to the database if the current one is invalid  
+
+		// Upsert new valid otp to the database if the current one is invalid
 	} else if err != nil && err == sql.ErrNoRows {
 
 		code := customStrings.RandomString(10)
 		expires_at := time.Now().Add(time.Hour * 24).UnixMilli()
-		
-		// Insert otp into the database. If current user already has one, 
+
+		// Insert otp into the database. If current user already has one,
 		// just replace the code and expiration date
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO otp (user_id, code, expires_at) 

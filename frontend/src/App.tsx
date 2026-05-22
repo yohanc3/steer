@@ -39,7 +39,6 @@ export default function App() {
         initializeUser();
     }, [user, onUserLogin, setUser, getAccessTokenSilently, isInitialized, user]);
 
-    console.log("user authenticated: ", isAuthenticated);
     if (!isAuthenticated) {
         return <LoginButton />;
     }

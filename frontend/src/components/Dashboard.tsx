@@ -19,6 +19,7 @@ export default function Dashboard() {
             <p>user name: {user.email} </p>
             <p>user connected to telegram: {user.isConnectedToTelegram} </p>
             <ConnectToTelegramBtn />
+
             <ConnectBank />
         </div>
     );

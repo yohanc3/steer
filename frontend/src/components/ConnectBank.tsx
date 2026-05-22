@@ -18,6 +18,7 @@ const ConnectBank = () => {
   const onEvent = useCallback<TellerConnectOnEvent>((name, data) => {
     console.log(name, data);
   }, []);
+    asd
   const onExit = useCallback<TellerConnectOnExit>(() => {
     console.log("TellerConnect was dismissed by user");
   }, []);

@@ -63,7 +63,7 @@ func GetTelegramConnectionCode(logger *applog.Logger, db *sql.DB, telegramServic
 		otp, err := telegramService.GetConnectionCode(r.Context(), user_id)
 
 		if err != nil {
-			return &appError{fmt.Errorf("error when sending user telegram connection code %w"), "Internal Server Error.", []string{"user_id", user_id}, http.StatusInternalServerError}
+			return &appError{fmt.Errorf("error when sending user telegram connection code %w", err), "Internal Server Error.", []string{"user_id", user_id}, http.StatusInternalServerError}
 		}
 
 		w.WriteHeader(http.StatusOK)

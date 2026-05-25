@@ -10,18 +10,17 @@ export default function ConnectToTelegramBtn() {
     console.log("expiration seconds left: ", codeExpirationSecondsLeft);
 
     useEffect(() => {
-        if (!user.ID || !data?.expires_at) {
+        if (!user.ID || !data?.expires_at || user.isConnectedToTelegram) {
             return;
         }
+
         const updateSecondsLeftIntervalID = setInterval(() => {
             setCodeExpirationSecondsLeft(() => {
-                const secondsLeft = Math.max(
-                    0,
-                    new Date(data.expires_at - Date.now()).getSeconds()
-                );
+                const diffMs = data.expires_at - Date.now();
+                const secondsLeft = Math.max(0, diffMs / 1000);
                 console.log("updating seconds before expiration to ", secondsLeft);
 
-                if (secondsLeft == 0) {
+                if (secondsLeft < 0) {
                     refetch();
                 }
 
@@ -32,11 +31,11 @@ export default function ConnectToTelegramBtn() {
         return () => {
             clearInterval(updateSecondsLeftIntervalID);
         };
-    }, [data, data?.code, data?.expires_at, refetch, user.ID]);
+    }, [data, data?.code, data?.expires_at, refetch, user.ID, user.isConnectedToTelegram]);
 
     return (
         <>
-            {user.isConnectedToTelegram ? (
+            {!user.isConnectedToTelegram ? (
                 <div>
                     <div>Seconds before refetching new code {codeExpirationSecondsLeft}</div>
                     <button
@@ -45,7 +44,7 @@ export default function ConnectToTelegramBtn() {
                             window.open(`https://t.me/OfficialSteerBot?start=${token}`, "_blank");
                         }}
                     >
-                        Connect to Telegram
+                        Connect to Telegram - connected? {String(user.isConnectedToTelegram)}
                     </button>{" "}
                 </div>
             ) : (

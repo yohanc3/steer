@@ -24,11 +24,6 @@ type OTP struct {
 	CreatedAt int    `json:"created_at"`
 }
 
-type TelegramServiceInterface interface {
-	GetConnectionCode(user_id int) (*Code, error)
-	DeepLinkAccount(code string) error
-}
-
 type TelegramService struct {
 	Logger *applog.Logger
 	DB     *sql.DB
@@ -90,17 +85,27 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 		return nil, fmt.Errorf("error when starting db transaction for user: %s %w", user_id, err)
 	}
 
-	// row := tx.QueryContext(ctx, `
-	// 	SELECT 
-	//
-	// 	`)
+	var conversationID sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT conversation_id FROM user
+		WHERE id = ?
+	`, user_id).Scan(&conversationID)
+
+	if err != nil {
+		return nil, fmt.Errorf("error when getting user conversation_id: %w", err)
+	}
+
+	if conversationID.Valid {
+		return &Code{}, nil 
+	}
 
 	// Select a valid Code
 	row := tx.QueryRowContext(ctx, `
 		SELECT code, expires_at FROM otp
 		WHERE user_id = ?
 		AND expires_at >= (unixepoch()) 
-		LIMIT 1`, user_id)
+		LIMIT 1 
+		`, user_id)
 
 	var otp *Code = &Code{}
 
@@ -112,7 +117,7 @@ func (tel *TelegramService) GetConnectionCode(ctx context.Context, user_id strin
 		tx.Commit()
 		return otp, nil
 
-		// Upsert new valid otp to the database if the current one is invalid
+	// Upsert new valid otp to the database if the current one is invalid
 	} else if err != nil && err == sql.ErrNoRows {
 
 		code := customStrings.RandomString(10)

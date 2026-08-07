@@ -2,61 +2,33 @@ package config
 
 import (
 	"fmt"
-	"os"
+
+	"github.com/caarlos0/env/v11"
 )
 
-// Global config
-var Cfg *Config
-
+// Config contains runtime environment variables.
 type Config struct {
-	Auth0Domain      string
-	Auth0Audience    string
-	DatabaseURL      string
-	TelegramBotToken string
-	ServerURL        string
+	DatabaseURL                 string   `env:"DATABASE_URL,required"`
+	PublicBaseURL               string   `env:"PUBLIC_BASE_URL,required"`
+	TelegramBotToken            string   `env:"TELEGRAM_BOT_TOKEN,required"`
+	TelegramWebhookSecret       string   `env:"TELEGRAM_WEBHOOK_SECRET,required"`
+	TellerApplicationID         string   `env:"TELLER_APPLICATION_ID,required"`
+	TellerEnvironment           string   `env:"TELLER_ENVIRONMENT,required"`
+	TellerCertPEM               string   `env:"TELLER_CERT_PEM,required"`
+	TellerKeyPEM                string   `env:"TELLER_KEY_PEM,required"`
+	TellerTokenSigningPublicKey string   `env:"TELLER_TOKEN_SIGNING_PUBLIC_KEY,required"`
+	TellerWebhookSecrets        []string `env:"TELLER_WEBHOOK_SECRETS,required"`
+	TokenEncryptionKey          string   `env:"TOKEN_ENCRYPTION_KEY,required"`
+	DeepSeekAPIKey              string   `env:"DEEPSEEK_API_KEY,required"`
+	DeepSeekBaseURL             string   `env:"DEEPSEEK_BASE_URL" envDefault:"https://api.deepseek.com"`
+	DeepSeekModel               string   `env:"DEEPSEEK_MODEL" envDefault:"deepseek-v4-pro"`
 }
 
-// Loads environment variables and initializes them in the global Config object.
-//
-// Implementation details: There's probably a better way to implement this, where 
-// we only define the env variable names and they're automatically verified and  
-// mapped to our global config object.
-// 
-// Note: This loads up a global struct, which can technically be modified 
-// elsewhere. Low priority, and not yet fixed if this comment still exists.
-func LoadConfig() error {
-	domain := os.Getenv("AUTH0_DOMAIN")
-	if domain == "" {
-		return fmt.Errorf("AUTH0_DOMAIN environment variable required")
+// LoadConfig parses Config from process environment variables.
+func LoadConfig() (*Config, error) {
+	var cfg Config
+	if err := env.Parse(&cfg); err != nil {
+		return nil, fmt.Errorf("parse environment: %w", err)
 	}
-
-	audience := os.Getenv("AUTH0_AUDIENCE")
-	if audience == "" {
-		return fmt.Errorf("AUTH0_AUDIENCE environment variable required")
-	}
-
-	dbUrl := os.Getenv("DATABASE_URL")
-	if dbUrl == "" {
-		return fmt.Errorf("DATABASE_URL environment variable required")
-	}
-
-	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if telegramBotToken == "" {
-		return fmt.Errorf("TELEGRAM_BOT_TOKEN environment variable required")
-	}
-
-	serverURL := os.Getenv("SERVER_URL")
-	if serverURL == "" {
-		return fmt.Errorf("SERVER_URL environment variable required")
-	}
-
-	Cfg = &Config{
-		Auth0Domain:      domain,
-		Auth0Audience:    audience,
-		DatabaseURL:      dbUrl,
-		TelegramBotToken: telegramBotToken,
-		ServerURL:        serverURL,
-	}
-
-	return nil
+	return &cfg, nil
 }

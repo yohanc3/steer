@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS webhook_events;
+DROP TABLE IF EXISTS transaction_versions;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS enrollments;
+DROP TABLE IF EXISTS connect_tokens;
+DROP TABLE IF EXISTS budget_limits;
+DROP TABLE IF EXISTS users;

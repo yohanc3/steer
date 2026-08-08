@@ -121,7 +121,10 @@ type Cipher interface {
 	Encrypt([]byte) ([]byte, []byte, error)
 	Decrypt([]byte, []byte) ([]byte, error)
 }
-type Service struct {
+
+// TellerService completes verified Teller Connect flows and synchronizes data.
+// Its dependencies must be configured with the application's persistent stores.
+type TellerService struct {
 	Client       Client
 	Users        models.UserStore
 	Sessions     models.ConnectSessionStore
@@ -136,7 +139,7 @@ type EnrollmentVerifier interface {
 	Verify(nonce, accessToken, tellerUserID, enrollmentID, environment string, signatures []string) error
 }
 
-func (service Service) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
+func (service TellerService) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
 	now := service.now()
 	session, err := service.Sessions.GetConnectSession(ctx, modelsHash(sessionToken), now)
 	if err != nil {
@@ -162,7 +165,7 @@ func (service Service) Complete(ctx context.Context, sessionToken, accessToken, 
 	}
 	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
 }
-func (service Service) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
+func (service TellerService) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
 	user, err := service.Users.GetUser(ctx, userID)
 	if err != nil {
 		return err
@@ -190,7 +193,7 @@ func (service Service) SyncUser(ctx context.Context, userID models.UserID, basel
 	}
 	return nil
 }
-func (service Service) now() time.Time {
+func (service TellerService) now() time.Time {
 	if service.Now != nil {
 		return service.Now().UTC()
 	}

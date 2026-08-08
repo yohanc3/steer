@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,20 +10,20 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	applicationbot "yohanc3/steer/bot"
 	"yohanc3/steer/config"
 	"yohanc3/steer/models"
 	"yohanc3/steer/storage"
 	"yohanc3/steer/teller"
 
-	"github.com/go-telegram/bot"
-	telegram "github.com/go-telegram/bot/models"
 	"github.com/joho/godotenv"
 )
 
-func newHandler(telegramHandler http.Handler, complete func(http.ResponseWriter, *http.Request)) http.Handler {
+func newAPIServer(telegramHandler http.Handler, service teller.TellerService) http.Handler {
+	controller := tellerConnectController{service: service}
 	mux := http.NewServeMux()
 	mux.Handle("POST /telegram/webhook", telegramHandler)
-	mux.HandleFunc("POST /api/teller/connect/complete", complete)
+	mux.HandleFunc("POST /api/teller/connect/complete", controller.complete)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -58,67 +55,19 @@ func run(parent context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create Teller enrollment verifier: %w", err)
 	}
-	service := teller.Service{Client: client, Users: repository, Sessions: repository, Transactions: repository, Cipher: cipher, Verifier: verifier, Environment: cfg.TellerEnvironment}
-	b, err := bot.New(cfg.TelegramBotToken, bot.WithWebhookSecretToken(cfg.TelegramWebhookSecret))
+	service := teller.TellerService{Client: client, Users: repository, Sessions: repository, Transactions: repository, Cipher: cipher, Verifier: verifier, Environment: cfg.TellerEnvironment}
+	b, err := applicationbot.New(cfg.TelegramBotToken, cfg.TelegramWebhookSecret, applicationbot.ConnectController{Users: repository, Sessions: repository, PublicBaseURL: cfg.PublicBaseURL})
 	if err != nil {
-		return fmt.Errorf("create telegram bot: %w", err)
+		return err
 	}
-	b.RegisterHandler(bot.HandlerTypeMessageText, "connect", bot.MatchTypeCommand, func(ctx context.Context, b *bot.Bot, update *telegram.Update) {
-		if update.Message == nil {
-			return
-		}
-		slog.Log(ctx, slog.LevelInfo, "handle connect command", "chat_id", update.Message.Chat.ID)
-		user, err := repository.GetOrCreateUser(ctx, update.Message.Chat.ID)
-		if err != nil {
-			slog.Log(ctx, slog.LevelError, "create telegram user", "error", err)
-			return
-		}
-		token, nonce, err := newConnectSession()
-		if err == nil {
-			err = repository.CreateConnectSession(ctx, models.ConnectSession{TokenHash: storage.HashToken(token), UserID: user.ID, Nonce: nonce, ExpiresAt: time.Now().Add(15 * time.Minute)})
-		}
-		if err != nil {
-			slog.Log(ctx, slog.LevelError, "create teller session", "error", err)
-			return
-		}
-		slog.Log(ctx, slog.LevelInfo, "created teller connect session", "user_id", user.ID)
-		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: cfg.PublicBaseURL + "/connect?session=" + token + "&nonce=" + nonce}); err != nil {
-			slog.Log(ctx, slog.LevelError, "send teller connect link", "chat_id", update.Message.Chat.ID, "error", err)
-			return
-		}
-		slog.Log(ctx, slog.LevelInfo, "sent teller connect link", "chat_id", update.Message.Chat.ID)
-	})
-	if _, err := b.SetMyCommands(parent, &bot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}}); err != nil {
-		return fmt.Errorf("set telegram commands: %w", err)
+	if err := applicationbot.RegisterCommands(parent, b); err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go b.StartWebhook(ctx)
 	go poll(ctx, service, repository, cfg.TellerPollInterval)
-	complete := func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			SessionToken string `json:"session_token"`
-			AccessToken  string `json:"access_token"`
-			Enrollment   struct {
-				ID string `json:"id"`
-			} `json:"enrollment"`
-			User struct {
-				ID string `json:"id"`
-			} `json:"user"`
-			Signatures []string `json:"signatures"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if err := service.Complete(r.Context(), request.SessionToken, request.AccessToken, request.Enrollment.ID, request.User.ID, request.Signatures); err != nil {
-			slog.Log(r.Context(), slog.LevelError, "complete teller connection", "error", err)
-			http.Error(w, "unable to connect account", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-	server := &http.Server{Addr: ":8080", Handler: newHandler(b.WebhookHandler(), complete), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: ":8080", Handler: newAPIServer(b.WebhookHandler(), service), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
 	select {
@@ -133,7 +82,7 @@ func run(parent context.Context) error {
 	return server.Shutdown(shutdown)
 }
 
-func poll(ctx context.Context, service teller.Service, users models.UserStore, interval time.Duration) {
+func poll(ctx context.Context, service teller.TellerService, users models.UserStore, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -152,17 +101,6 @@ func poll(ctx context.Context, service teller.Service, users models.UserStore, i
 			}
 		}
 	}
-}
-func newConnectSession() (string, string, error) {
-	raw := make([]byte, 32)
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	if _, err := rand.Read(nonce); err != nil {
-		return "", "", err
-	}
-	return hex.EncodeToString(raw), hex.EncodeToString(nonce), nil
 }
 func main() {
 	if err := run(context.Background()); err != nil {

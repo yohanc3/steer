@@ -63,10 +63,11 @@ func run(parent context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create telegram bot: %w", err)
 	}
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/connect", bot.MatchTypeCommand, func(ctx context.Context, b *bot.Bot, update *telegram.Update) {
+	b.RegisterHandler(bot.HandlerTypeMessageText, "connect", bot.MatchTypeCommand, func(ctx context.Context, b *bot.Bot, update *telegram.Update) {
 		if update.Message == nil {
 			return
 		}
+		slog.Log(ctx, slog.LevelInfo, "handle connect command", "chat_id", update.Message.Chat.ID)
 		user, err := repository.GetOrCreateUser(ctx, update.Message.Chat.ID)
 		if err != nil {
 			slog.Log(ctx, slog.LevelError, "create telegram user", "error", err)
@@ -80,7 +81,12 @@ func run(parent context.Context) error {
 			slog.Log(ctx, slog.LevelError, "create teller session", "error", err)
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: cfg.PublicBaseURL + "/connect?session=" + token + "&nonce=" + nonce})
+		slog.Log(ctx, slog.LevelInfo, "created teller connect session", "user_id", user.ID)
+		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: cfg.PublicBaseURL + "/connect?session=" + token + "&nonce=" + nonce}); err != nil {
+			slog.Log(ctx, slog.LevelError, "send teller connect link", "chat_id", update.Message.Chat.ID, "error", err)
+			return
+		}
+		slog.Log(ctx, slog.LevelInfo, "sent teller connect link", "chat_id", update.Message.Chat.ID)
 	})
 	if _, err := b.SetMyCommands(parent, &bot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}}); err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)

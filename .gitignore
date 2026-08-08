@@ -8,3 +8,7 @@
 .DS_Store
 .header*
 
+# Local Codex tooling
+.agents/
+.codex-plugins/
+skills-lock.json

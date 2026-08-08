@@ -16,17 +16,37 @@ func TestOpenAppliesMigrationsIdempotently(t *testing.T) {
 		}
 		var tableCount int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master
-			WHERE type = 'table' AND name IN ('users', 'budget_limits', 'enrollments', 'transactions', 'jobs')`).Scan(&tableCount); err != nil {
+			WHERE type = 'table' AND name IN ('users', 'telegram_accounts', 'email_verification_codes', 'budget_limits', 'enrollments', 'transactions', 'jobs')`).Scan(&tableCount); err != nil {
 			db.Close()
 			t.Fatalf("query schema: %v", err)
 		}
-		if tableCount != 5 {
+		if tableCount != 7 {
 			db.Close()
 			t.Fatalf("table count = %d", tableCount)
 		}
 		if err := db.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
+	}
+}
+
+func TestOpenRecordsLatestMigrationVersion(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+
+	var version int
+	var dirty bool
+	if err := db.QueryRow("SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&version, &dirty); err != nil {
+		t.Fatalf("read migration version: %v", err)
+	}
+	if version != 2 || dirty {
+		t.Fatalf("migration version = %d, dirty = %t", version, dirty)
+	}
+	if _, err := db.Exec("SELECT email_verified_at FROM users LIMIT 1"); err != nil {
+		t.Fatalf("email verification column missing: %v", err)
 	}
 }
 

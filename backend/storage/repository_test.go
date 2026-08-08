@@ -46,6 +46,31 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	}
 }
 
+func TestListConnectedUsersReleasesRowsBeforeLoadingUsers(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := Repository{DB: db}
+	user, err := repository.GetOrCreateUser(context.Background(), 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SaveTellerConnection(context.Background(), user.ID, models.Account{ID: "acc"}, "enr", "usr", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	users, err := repository.ListConnectedUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].ID != user.ID {
+		t.Fatalf("users = %#v", users)
+	}
+}
+
 func TestFinalizeConnectSessionIsAtomicAndSingleUse(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
 	if err != nil {

@@ -54,20 +54,32 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 	if err != nil {
 		return nil, fmt.Errorf("list connected users: %w", err)
 	}
-	defer rows.Close()
-	var users []models.User
+	var ids []models.UserID
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan user ID: %w", err)
 		}
-		user, err := repository.GetUser(ctx, models.UserID(id))
+		ids = append(ids, models.UserID(id))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate connected user IDs: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close connected user IDs: %w", err)
+	}
+
+	users := make([]models.User, 0, len(ids))
+	for _, id := range ids {
+		user, err := repository.GetUser(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		users = append(users, user)
 	}
-	return users, rows.Err()
+	return users, nil
 }
 
 func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, enrollmentID, tellerUserID string, ciphertext, nonce []byte, environment string) error {

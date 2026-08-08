@@ -215,10 +215,10 @@ func (verifier Ed25519EnrollmentVerifier) Verify(nonce, accessToken, tellerUserI
 	if nonce == "" || accessToken == "" || tellerUserID == "" || enrollmentID == "" || environment == "" {
 		return errors.New("incomplete signed enrollment")
 	}
-	digest := sha256.Sum256([]byte(strings.Join([]string{nonce, accessToken, tellerUserID, enrollmentID, environment}, ".")))
+	message := []byte(strings.Join([]string{nonce, accessToken, tellerUserID, enrollmentID, environment}, "."))
 	for _, encodedSignature := range signatures {
 		signature, err := decodeBase64OrHex(encodedSignature)
-		if err == nil && ed25519.Verify(verifier.PublicKey, digest[:], signature) {
+		if err == nil && ed25519.Verify(verifier.PublicKey, message, signature) {
 			return nil
 		}
 	}

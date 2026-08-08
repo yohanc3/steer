@@ -3,7 +3,6 @@ package teller
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -19,8 +18,7 @@ func TestEd25519EnrollmentVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := []string{"nonce", "token", "usr_1", "enr_1", "sandbox"}
-	digest := sha256.Sum256([]byte(strings.Join(values, ".")))
-	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, digest[:]))
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(strings.Join(values, "."))))
 	if err := verifier.Verify(values[0], values[1], values[2], values[3], values[4], []string{signature}); err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}

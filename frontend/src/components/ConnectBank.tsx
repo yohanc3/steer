@@ -16,7 +16,8 @@ export default function ConnectBank({ sessionToken, nonce }: { sessionToken: str
     });
     setMessage(response.ok ? "Bank connected. You can return to Telegram." : "Unable to connect this account.");
   }, [sessionToken]);
-  const config: TellerConnectOptions = { applicationId: import.meta.env.VITE_TELLER_APPLICATION_ID, products: ["transactions"], selectAccount: "single", nonce, onSuccess };
+  const environment = import.meta.env.VITE_TELLER_ENVIRONMENT as TellerConnectOptions["environment"];
+  const config: TellerConnectOptions = { applicationId: import.meta.env.VITE_TELLER_APPLICATION_ID, environment, products: ["transactions"], selectAccount: "single", nonce, onSuccess };
   const { open, ready } = useTellerConnect(config);
   return <section><button onClick={() => open()} disabled={!ready || !!message}>Connect bank</button>{message && <p>{message}</p>}</section>;
 }

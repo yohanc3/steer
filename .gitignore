@@ -4,6 +4,7 @@
 
 # Any .env file
 *.env
+.env.dev
 
 .DS_Store
 .header*

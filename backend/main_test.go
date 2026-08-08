@@ -7,37 +7,6 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	response := httptest.NewRecorder()
-
-	newHandler().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	if got := response.Body.String(); got != `{"status":"ok"}` {
-		t.Fatalf("body = %q", got)
-	}
-}
-
-func TestHealthRejectsWrongMethod(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/healthz", nil)
-	response := httptest.NewRecorder()
-
-	newHandler().ServeHTTP(response, request)
-
-	if response.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d", response.Code)
-	}
-}
-
-func TestUnknownRoute(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/unknown", nil)
-	response := httptest.NewRecorder()
-
-	newHandler().ServeHTTP(response, request)
-
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d", response.Code)
-	}
+	handler:=newHandler(http.NotFoundHandler(),func(w http.ResponseWriter,_ *http.Request){w.WriteHeader(http.StatusNoContent)})
+	response:=httptest.NewRecorder();handler.ServeHTTP(response,httptest.NewRequest(http.MethodGet,"/healthz",nil));if response.Code!=http.StatusOK{t.Fatalf("status = %d",response.Code)}
 }

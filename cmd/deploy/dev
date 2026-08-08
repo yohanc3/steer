@@ -85,18 +85,20 @@ curl --fail --silent "http://127.0.0.1:${FRONTEND_PORT}/healthz" >/dev/null || {
   exit 1
 }
 
-ngrok http --url="$PUBLIC_BASE_URL" "$FRONTEND_PORT" &
+ngrok http --url="$NGROK_DOMAIN" "$FRONTEND_PORT" &
 ngrok_pid="$!"
 
+ngrok_status=""
 for _ in {1..30}; do
-  if curl --fail --silent "${PUBLIC_BASE_URL}/healthz" >/dev/null; then
-    break
-  fi
-  sleep 1
+	ngrok_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "${PUBLIC_BASE_URL}/healthz" || true)"
+	if [[ "$ngrok_status" == "200" ]]; then
+		break
+	fi
+	sleep 1
 done
-curl --fail --silent "${PUBLIC_BASE_URL}/healthz" >/dev/null || {
-  printf 'ngrok endpoint did not become healthy\n' >&2
-  exit 1
+[[ "$ngrok_status" == "200" ]] || {
+	printf 'ngrok endpoint did not become healthy (HTTP %s)\n' "$ngrok_status" >&2
+	exit 1
 }
 
 printf 'registering Telegram webhook: %s/telegram/webhook\n' "$PUBLIC_BASE_URL"

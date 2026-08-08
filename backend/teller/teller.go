@@ -32,6 +32,8 @@ type HTTPClient struct {
 	baseURL string
 }
 
+// NewHTTPClient creates the mutual-TLS client used for Teller API calls.
+// The PEM certificate and private key must be issued for the Teller application.
 func NewHTTPClient(certPEM, keyPEM string) (*HTTPClient, error) {
 	certificate, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
 	if err != nil {
@@ -40,6 +42,8 @@ func NewHTTPClient(certPEM, keyPEM string) (*HTTPClient, error) {
 	return &HTTPClient{baseURL: "https://api.teller.io", client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}}}}, nil
 }
 
+// ListAccounts fetches the accounts authorized by an access token.
+// The token must be valid for the configured Teller API environment.
 func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]models.Account, error) {
 	var response []struct {
 		ID       string `json:"id"`
@@ -60,6 +64,8 @@ func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]mod
 	return accounts, nil
 }
 
+// ListTransactions fetches an account's transactions within an inclusive date window.
+// Token, account ID, and dates must be valid Teller API request values.
 func (client *HTTPClient) ListTransactions(ctx context.Context, token, accountID, startDate, endDate string) ([]models.Transaction, error) {
 	path := "/accounts/" + url.PathEscape(accountID) + "/transactions?start_date=" + url.QueryEscape(startDate) + "&end_date=" + url.QueryEscape(endDate)
 	var response []struct {
@@ -94,6 +100,8 @@ func (client *HTTPClient) ListTransactions(ctx context.Context, token, accountID
 	return transactions, nil
 }
 
+// get issues an authenticated Teller GET request and decodes its JSON response.
+// The path must be API-relative and destination must accept the endpoint payload.
 func (client *HTTPClient) get(ctx context.Context, token, path string, destination any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
 	if err != nil {
@@ -139,6 +147,8 @@ type EnrollmentVerifier interface {
 	Verify(nonce, accessToken, tellerUserID, enrollmentID, environment string, signatures []string) error
 }
 
+// Complete validates a browser enrollment and atomically stores its first sync.
+// The session token and signed Teller fields must originate from one Connect flow.
 func (service TellerService) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
 	now := service.now()
 	session, err := service.Sessions.GetConnectSession(ctx, modelsHash(sessionToken), now)
@@ -165,6 +175,9 @@ func (service TellerService) Complete(ctx context.Context, sessionToken, accessT
 	}
 	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
 }
+
+// SyncUser fetches and stores new transactions for a connected Teller user.
+// The user must have encrypted credentials and an active Teller account.
 func (service TellerService) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
 	user, err := service.Users.GetUser(ctx, userID)
 	if err != nil {
@@ -193,18 +206,26 @@ func (service TellerService) SyncUser(ctx context.Context, userID models.UserID,
 	}
 	return nil
 }
+
+// now returns the injected clock when testing or the current UTC time in production.
+// An injected clock must return a value that can be converted to UTC.
 func (service TellerService) now() time.Time {
 	if service.Now != nil {
 		return service.Now().UTC()
 	}
 	return time.Now().UTC()
 }
+
+// modelsHash creates the session-token digest shared by Teller service and storage.
+// It must receive the original browser token, not an already hashed value.
 func modelsHash(token string) []byte { sum := sha256.Sum256([]byte(token)); return sum[:] }
 
 // Ed25519EnrollmentVerifier verifies the signed payload returned by Teller
 // Connect when initialized with a server-generated nonce.
 type Ed25519EnrollmentVerifier struct{ PublicKey ed25519.PublicKey }
 
+// NewEd25519EnrollmentVerifier builds a verifier from Teller's configured public key.
+// The key must be PEM or a raw Ed25519 key encoded as base64 or hexadecimal.
 func NewEd25519EnrollmentVerifier(encodedKey string) (*Ed25519EnrollmentVerifier, error) {
 	key, err := decodeEd25519PublicKey(encodedKey)
 	if err != nil {
@@ -213,6 +234,8 @@ func NewEd25519EnrollmentVerifier(encodedKey string) (*Ed25519EnrollmentVerifier
 	return &Ed25519EnrollmentVerifier{PublicKey: key}, nil
 }
 
+// Verify accepts one signature matching the exact Teller Connect enrollment payload.
+// Nonce, token, IDs, environment, and signatures must all be supplied by Connect.
 func (verifier Ed25519EnrollmentVerifier) Verify(nonce, accessToken, tellerUserID, enrollmentID, environment string, signatures []string) error {
 	if nonce == "" || accessToken == "" || tellerUserID == "" || enrollmentID == "" || environment == "" {
 		return errors.New("incomplete signed enrollment")
@@ -227,6 +250,8 @@ func (verifier Ed25519EnrollmentVerifier) Verify(nonce, accessToken, tellerUserI
 	return errors.New("invalid teller enrollment signature")
 }
 
+// decodeEd25519PublicKey parses Teller's PEM or encoded raw Ed25519 public key.
+// The supplied key must decode to exactly one Ed25519 public key.
 func decodeEd25519PublicKey(value string) (ed25519.PublicKey, error) {
 	if block, _ := pem.Decode([]byte(value)); block != nil {
 		key, err := x509.ParsePKIXPublicKey(block.Bytes)
@@ -246,6 +271,8 @@ func decodeEd25519PublicKey(value string) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(key), nil
 }
 
+// decodeBase64OrHex decodes the configured key or signature encodings accepted by Teller.
+// The value must be nonempty, correctly padded when required, and valid in one format.
 func decodeBase64OrHex(value string) ([]byte, error) {
 	value = strings.TrimSpace(value)
 	for _, decoder := range []func(string) ([]byte, error){base64.StdEncoding.DecodeString, base64.RawStdEncoding.DecodeString, base64.URLEncoding.DecodeString, base64.RawURLEncoding.DecodeString, hex.DecodeString} {
@@ -259,6 +286,8 @@ func decodeBase64OrHex(value string) ([]byte, error) {
 
 type AESGCM struct{ block cryptocipher.Block }
 
+// NewAESGCM constructs the authenticated cipher for stored Teller access tokens.
+// Key material must be an AES-valid length and should come from runtime configuration.
 func NewAESGCM(key []byte) (*AESGCM, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -266,6 +295,9 @@ func NewAESGCM(key []byte) (*AESGCM, error) {
 	}
 	return &AESGCM{block: block}, nil
 }
+
+// Encrypt seals plaintext with a new random nonce using AES-GCM.
+// The caller must store both returned ciphertext and nonce together.
 func (cipher *AESGCM) Encrypt(plaintext []byte) ([]byte, []byte, error) {
 	gcm, err := cipher.NewGCM()
 	if err != nil {
@@ -277,6 +309,9 @@ func (cipher *AESGCM) Encrypt(plaintext []byte) ([]byte, []byte, error) {
 	}
 	return gcm.Seal(nil, nonce, plaintext, nil), nonce, nil
 }
+
+// Decrypt authenticates and opens ciphertext using its matching AES-GCM nonce.
+// Ciphertext and nonce must have been returned by Encrypt under the same key.
 func (cipher *AESGCM) Decrypt(ciphertext, nonce []byte) ([]byte, error) {
 	gcm, err := cipher.NewGCM()
 	if err != nil {
@@ -288,4 +323,7 @@ func (cipher *AESGCM) Decrypt(ciphertext, nonce []byte) ([]byte, error) {
 	}
 	return plaintext, nil
 }
+
+// NewGCM exposes a standard AEAD instance for the configured AES block cipher.
+// It is used by Encrypt and Decrypt and may fail only for invalid cipher setup.
 func (cipher *AESGCM) NewGCM() (cryptocipher.AEAD, error) { return cryptocipher.NewGCM(cipher.block) }

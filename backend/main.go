@@ -19,6 +19,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// newAPIServer registers HTTP routes for Telegram and Teller Connect.
+// It requires the Telegram webhook handler and a fully configured Teller service.
 func newAPIServer(telegramHandler http.Handler, service teller.TellerService) http.Handler {
 	controller := tellerConnectController{service: service}
 	mux := http.NewServeMux()
@@ -31,6 +33,8 @@ func newAPIServer(telegramHandler http.Handler, service teller.TellerService) ht
 	return mux
 }
 
+// run constructs the application dependencies and serves HTTP until cancellation.
+// It requires complete runtime configuration, SQLite access, Telegram, and Teller credentials.
 func run(parent context.Context) error {
 	_ = godotenv.Load()
 	cfg, err := config.LoadConfig()
@@ -82,6 +86,8 @@ func run(parent context.Context) error {
 	return server.Shutdown(shutdown)
 }
 
+// poll periodically synchronizes each connected Teller account.
+// It stops when ctx is cancelled and requires a configured TellerService and user store.
 func poll(ctx context.Context, service teller.TellerService, users models.UserStore, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -102,6 +108,9 @@ func poll(ctx context.Context, service teller.TellerService, users models.UserSt
 		}
 	}
 }
+
+// main starts the application using the process lifetime as its parent context.
+// Startup failures are logged before the process exits unsuccessfully.
 func main() {
 	if err := run(context.Background()); err != nil {
 		slog.Log(context.Background(), slog.LevelError, "application stopped", "error", err)

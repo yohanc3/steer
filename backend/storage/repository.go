@@ -16,6 +16,8 @@ var ErrNotFound = errors.New("not found")
 
 type Repository struct{ DB *sql.DB }
 
+// GetOrCreateUser returns the local user for a Telegram conversation.
+// It looks up the conversation first and creates a UUID-backed user if absent.
 func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID int64) (models.User, error) {
 	var id string
 	err := repository.DB.QueryRowContext(ctx, `SELECT id FROM users WHERE telegram_conversation_id = ?`, conversationID).Scan(&id)
@@ -32,6 +34,8 @@ func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID
 	return repository.GetUser(ctx, models.UserID(id))
 }
 
+// GetUser loads local and Teller connection state for a user ID.
+// The ID must refer to a persisted user; absent users return ErrNotFound.
 func (repository Repository) GetUser(ctx context.Context, userID models.UserID) (models.User, error) {
 	var user models.User
 	var baseline sql.NullInt64
@@ -53,6 +57,8 @@ func (repository Repository) GetUser(ctx context.Context, userID models.UserID) 
 	return user, nil
 }
 
+// ListConnectedUsers returns users whose encrypted Teller credentials are stored.
+// It closes the ID query before loading each user because SQLite has one connection.
 func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := repository.DB.QueryContext(ctx, `SELECT id FROM users WHERE teller_account_id IS NOT NULL AND teller_access_token_ciphertext IS NOT NULL`)
 	if err != nil {
@@ -86,6 +92,8 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 	return users, nil
 }
 
+// SaveTellerConnection replaces a user's active Teller account and credentials.
+// The account and user must be valid Teller values and userID must already exist.
 func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, tellerUserID string, ciphertext, nonce []byte, environment string) error {
 	result, err := repository.DB.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, tellerUserID, ciphertext, nonce, environment, userID)
 	if err != nil {
@@ -101,6 +109,8 @@ func (repository Repository) SaveTellerConnection(ctx context.Context, userID mo
 	return nil
 }
 
+// MarkBaselineComplete records when initial transaction classification finishes.
+// The timestamp is persisted in UTC seconds for an existing user.
 func (repository Repository) MarkBaselineComplete(ctx context.Context, userID models.UserID, at time.Time) error {
 	_, err := repository.DB.ExecContext(ctx, `UPDATE users SET baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, at.Unix(), userID)
 	if err != nil {
@@ -109,6 +119,8 @@ func (repository Repository) MarkBaselineComplete(ctx context.Context, userID mo
 	return nil
 }
 
+// CreateConnectSession stores a one-time, expiring Teller Connect session.
+// The caller must hash the browser token and provide a user-owned nonce.
 func (repository Repository) CreateConnectSession(ctx context.Context, session models.ConnectSession) error {
 	_, err := repository.DB.ExecContext(ctx, `INSERT INTO teller_connect_sessions(token_hash, user_id, nonce, expires_at) VALUES (?, ?, ?, ?)`, session.TokenHash, session.UserID, session.Nonce, session.ExpiresAt.Unix())
 	if err != nil {
@@ -117,6 +129,8 @@ func (repository Repository) CreateConnectSession(ctx context.Context, session m
 	return nil
 }
 
+// GetConnectSession returns a live, unconsumed session for a hashed browser token.
+// Expired, consumed, or unknown tokens deliberately return ErrNotFound.
 func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (models.ConnectSession, error) {
 	var session models.ConnectSession
 	var expires, consumed int64
@@ -140,8 +154,9 @@ func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []
 	return session, nil
 }
 
-// FinalizeConnectSession atomically records the completed Teller connection,
-// its initial transaction baseline, and the one-time session consumption.
+// FinalizeConnectSession atomically records a completed Teller connection,
+// its initial transaction baseline, and one-time session consumption.
+// Completion must contain a validated token hash, encrypted credentials, and data.
 func (repository Repository) FinalizeConnectSession(ctx context.Context, completion models.ConnectCompletion) error {
 	tx, err := repository.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -178,6 +193,8 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	return nil
 }
 
+// UpsertTransactions writes Teller transactions outside a connect finalization.
+// The user must exist; baseline controls how the supplied records are classified.
 func (repository Repository) UpsertTransactions(ctx context.Context, userID models.UserID, transactions []models.Transaction, baseline bool) error {
 	return upsertTransactions(ctx, repository.DB, userID, transactions, baseline)
 }
@@ -186,9 +203,49 @@ type sqlExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
+const upsertTransactionSQL = `
+INSERT INTO transactions (
+    transaction_id,
+    user_id,
+    account_id,
+    amount,
+    transaction_date,
+    description,
+    status,
+    transaction_type,
+    running_balance,
+    processing_status,
+    category,
+    counterparty_name,
+    counterparty_type,
+    self_link,
+    account_link,
+    baseline
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(transaction_id) DO UPDATE SET
+    user_id = excluded.user_id,
+    account_id = excluded.account_id,
+    amount = excluded.amount,
+    transaction_date = excluded.transaction_date,
+    description = excluded.description,
+    status = excluded.status,
+    transaction_type = excluded.transaction_type,
+    running_balance = excluded.running_balance,
+    processing_status = excluded.processing_status,
+    category = excluded.category,
+    counterparty_name = excluded.counterparty_name,
+    counterparty_type = excluded.counterparty_type,
+    self_link = excluded.self_link,
+    account_link = excluded.account_link,
+    baseline = excluded.baseline,
+    updated_at = unixepoch()
+`
+
+// upsertTransactions executes transaction writes with a database or SQL transaction.
+// The executor must remain valid for every supplied transaction in the batch.
 func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models.UserID, transactions []models.Transaction, baseline bool) error {
 	for _, transaction := range transactions {
-		_, err := executor.ExecContext(ctx, `INSERT INTO transactions(transaction_id,user_id,account_id,amount,transaction_date,description,status,transaction_type,running_balance,processing_status,category,counterparty_name,counterparty_type,self_link,account_link,baseline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(transaction_id) DO UPDATE SET user_id=excluded.user_id,account_id=excluded.account_id,amount=excluded.amount,transaction_date=excluded.transaction_date,description=excluded.description,status=excluded.status,transaction_type=excluded.transaction_type,running_balance=excluded.running_balance,processing_status=excluded.processing_status,category=excluded.category,counterparty_name=excluded.counterparty_name,counterparty_type=excluded.counterparty_type,self_link=excluded.self_link,account_link=excluded.account_link,baseline=excluded.baseline,updated_at=unixepoch()`, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
+		_, err := executor.ExecContext(ctx, upsertTransactionSQL, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
 		if err != nil {
 			return fmt.Errorf("upsert transaction: %w", err)
 		}
@@ -196,6 +253,8 @@ func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models
 	return nil
 }
 
+// SyncStartDate returns the earliest pending or latest completed account date.
+// The account ID scopes reconnects so prior accounts cannot advance its cursor.
 func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID, accountID string) (string, error) {
 	var date string
 	err := repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
@@ -211,7 +270,12 @@ func (repository Repository) SyncStartDate(ctx context.Context, userID models.Us
 	return date, nil
 }
 
+// HashToken produces the fixed-size database representation of a browser token.
+// Callers must retain only this digest, never the original bearer token.
 func HashToken(token string) []byte { sum := sha256.Sum256([]byte(token)); return sum[:] }
+
+// boolToInt converts SQLite boolean values to their integer representation.
+// It is used only for columns declared as INTEGER flags.
 func boolToInt(value bool) int {
 	if value {
 		return 1

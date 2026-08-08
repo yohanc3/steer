@@ -46,7 +46,7 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	}
 }
 
-func TestConnectSessionIsSingleUse(t *testing.T) {
+func TestFinalizeConnectSessionIsAtomicAndSingleUse(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,10 +61,25 @@ func TestConnectSessionIsSingleUse(t *testing.T) {
 	if err := repository.CreateConnectSession(context.Background(), models.ConnectSession{TokenHash: token, UserID: user.ID, Nonce: "nonce", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ConsumeConnectSession(context.Background(), token, time.Now()); err != nil {
+	otherUser, err := repository.GetOrCreateUser(context.Background(), 2)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ConsumeConnectSession(context.Background(), token, time.Now()); err == nil {
-		t.Fatal("second consumption succeeded")
+	if err := repository.SaveTellerConnection(context.Background(), otherUser.ID, models.Account{ID: "acc-in-use"}, "enr-existing", "usr-existing", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
+		t.Fatal(err)
+	}
+	completion := models.ConnectCompletion{TokenHash: token, Account: models.Account{ID: "acc-in-use"}, EnrollmentID: "enr", TellerUserID: "usr", AccessToken: []byte("ciphertext"), AccessTokenNonce: []byte("nonce"), Environment: "sandbox", CompletedAt: time.Now()}
+	if err := repository.FinalizeConnectSession(context.Background(), completion); err == nil {
+		t.Fatal("finalization with duplicate account succeeded")
+	}
+	if _, err := repository.GetConnectSession(context.Background(), token, time.Now()); err != nil {
+		t.Fatalf("failed finalization consumed session: %v", err)
+	}
+	completion.Account.ID = "acc-new"
+	if err := repository.FinalizeConnectSession(context.Background(), completion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.GetConnectSession(context.Background(), token, time.Now()); err == nil {
+		t.Fatal("finalized session remained usable")
 	}
 }

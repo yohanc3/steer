@@ -54,7 +54,11 @@ func run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
-	service := teller.Service{Client: client, Users: repository, Sessions: repository, Transactions: repository, Cipher: cipher, Environment: cfg.TellerEnvironment}
+	verifier, err := teller.NewEd25519EnrollmentVerifier(cfg.TellerTokenSigningPublicKey)
+	if err != nil {
+		return fmt.Errorf("create Teller enrollment verifier: %w", err)
+	}
+	service := teller.Service{Client: client, Users: repository, Sessions: repository, Transactions: repository, Cipher: cipher, Verifier: verifier, Environment: cfg.TellerEnvironment}
 	b, err := bot.New(cfg.TelegramBotToken, bot.WithWebhookSecretToken(cfg.TelegramWebhookSecret))
 	if err != nil {
 		return fmt.Errorf("create telegram bot: %w", err)
@@ -76,7 +80,7 @@ func run(parent context.Context) error {
 			slog.Log(ctx, slog.LevelError, "create teller session", "error", err)
 			return
 		}
-		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: cfg.PublicBaseURL + "/connect?session=" + token})
+		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: cfg.PublicBaseURL + "/connect?session=" + token + "&nonce=" + nonce})
 	})
 	if _, err := b.SetMyCommands(parent, &bot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}}); err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)
@@ -95,12 +99,13 @@ func run(parent context.Context) error {
 			User struct {
 				ID string `json:"id"`
 			} `json:"user"`
+			Signatures []string `json:"signatures"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := service.Complete(r.Context(), request.SessionToken, request.AccessToken, request.Enrollment.ID, request.User.ID); err != nil {
+		if err := service.Complete(r.Context(), request.SessionToken, request.AccessToken, request.Enrollment.ID, request.User.ID, request.Signatures); err != nil {
 			slog.Log(r.Context(), slog.LevelError, "complete teller connection", "error", err)
 			http.Error(w, "unable to connect account", http.StatusBadRequest)
 			return

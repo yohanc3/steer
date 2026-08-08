@@ -101,7 +101,7 @@ func (repository Repository) CreateConnectSession(ctx context.Context, session m
 	return nil
 }
 
-func (repository Repository) ConsumeConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (models.ConnectSession, error) {
+func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (models.ConnectSession, error) {
 	var session models.ConnectSession
 	var expires, consumed int64
 	var consumedNull sql.NullInt64
@@ -121,20 +121,58 @@ func (repository Repository) ConsumeConnectSession(ctx context.Context, tokenHas
 	if session.ConsumedAt != nil || !session.ExpiresAt.After(now) {
 		return models.ConnectSession{}, ErrNotFound
 	}
-	result, err := repository.DB.ExecContext(ctx, `UPDATE teller_connect_sessions SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL`, now.Unix(), tokenHash)
-	if err != nil {
-		return models.ConnectSession{}, fmt.Errorf("consume connect session: %w", err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil || changed != 1 {
-		return models.ConnectSession{}, ErrNotFound
-	}
 	return session, nil
 }
 
+// FinalizeConnectSession atomically records the completed Teller connection,
+// its initial transaction baseline, and the one-time session consumption.
+func (repository Repository) FinalizeConnectSession(ctx context.Context, completion models.ConnectCompletion) error {
+	tx, err := repository.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin connect completion: %w", err)
+	}
+	defer tx.Rollback()
+
+	var userID models.UserID
+	result, err := tx.ExecContext(ctx, `UPDATE teller_connect_sessions SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, completion.CompletedAt.Unix(), completion.TokenHash, completion.CompletedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("consume connect session: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ErrNotFound
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM teller_connect_sessions WHERE token_hash=?`, completion.TokenHash).Scan(&userID); err != nil {
+		return fmt.Errorf("get connect session user: %w", err)
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_enrollment_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.Account.ID, completion.EnrollmentID, completion.TellerUserID, completion.AccessToken, completion.AccessTokenNonce, completion.Environment, completion.CompletedAt.Unix(), userID)
+	if err != nil {
+		return fmt.Errorf("save teller connection: %w", err)
+	}
+	changed, err = result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ErrNotFound
+	}
+	if err := upsertTransactions(ctx, tx, userID, completion.Transactions, true); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit connect completion: %w", err)
+	}
+	return nil
+}
+
 func (repository Repository) UpsertTransactions(ctx context.Context, userID models.UserID, transactions []models.Transaction, baseline bool) error {
+	return upsertTransactions(ctx, repository.DB, userID, transactions, baseline)
+}
+
+type sqlExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models.UserID, transactions []models.Transaction, baseline bool) error {
 	for _, transaction := range transactions {
-		_, err := repository.DB.ExecContext(ctx, `INSERT INTO transactions(transaction_id,user_id,account_id,amount,transaction_date,description,status,transaction_type,running_balance,processing_status,category,counterparty_name,counterparty_type,self_link,account_link,baseline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(transaction_id) DO UPDATE SET user_id=excluded.user_id,account_id=excluded.account_id,amount=excluded.amount,transaction_date=excluded.transaction_date,description=excluded.description,status=excluded.status,transaction_type=excluded.transaction_type,running_balance=excluded.running_balance,processing_status=excluded.processing_status,category=excluded.category,counterparty_name=excluded.counterparty_name,counterparty_type=excluded.counterparty_type,self_link=excluded.self_link,account_link=excluded.account_link,updated_at=unixepoch()`, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
+		_, err := executor.ExecContext(ctx, `INSERT INTO transactions(transaction_id,user_id,account_id,amount,transaction_date,description,status,transaction_type,running_balance,processing_status,category,counterparty_name,counterparty_type,self_link,account_link,baseline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(transaction_id) DO UPDATE SET user_id=excluded.user_id,account_id=excluded.account_id,amount=excluded.amount,transaction_date=excluded.transaction_date,description=excluded.description,status=excluded.status,transaction_type=excluded.transaction_type,running_balance=excluded.running_balance,processing_status=excluded.processing_status,category=excluded.category,counterparty_name=excluded.counterparty_name,counterparty_type=excluded.counterparty_type,self_link=excluded.self_link,account_link=excluded.account_link,baseline=excluded.baseline,updated_at=unixepoch()`, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
 		if err != nil {
 			return fmt.Errorf("upsert transaction: %w", err)
 		}

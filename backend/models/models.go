@@ -27,6 +27,21 @@ type ConnectSession struct {
 	ConsumedAt *time.Time
 }
 
+// ConnectCompletion is the fully validated result of a Teller Connect session.
+// Persisting it consumes the session, saves the connection, and imports the
+// initial baseline as one database transaction.
+type ConnectCompletion struct {
+	TokenHash        []byte
+	Account          Account
+	EnrollmentID     string
+	TellerUserID     string
+	AccessToken      []byte
+	AccessTokenNonce []byte
+	Environment      string
+	Transactions     []Transaction
+	CompletedAt      time.Time
+}
+
 type Account struct {
 	ID           string
 	EnrollmentID string
@@ -65,7 +80,8 @@ type UserStore interface {
 
 type ConnectSessionStore interface {
 	CreateConnectSession(ctx context.Context, session ConnectSession) error
-	ConsumeConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (ConnectSession, error)
+	GetConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (ConnectSession, error)
+	FinalizeConnectSession(ctx context.Context, completion ConnectCompletion) error
 }
 
 type TransactionStore interface {

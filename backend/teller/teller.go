@@ -4,13 +4,20 @@ import (
 	"context"
 	"crypto/aes"
 	cryptocipher "crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"yohanc3/steer/models"
 )
@@ -121,14 +128,23 @@ type Service struct {
 	Sessions     models.ConnectSessionStore
 	Transactions models.TransactionStore
 	Cipher       Cipher
+	Verifier     EnrollmentVerifier
 	Environment  string
 	Now          func() time.Time
 }
 
-func (service Service) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string) error {
-	session, err := service.Sessions.ConsumeConnectSession(ctx, modelsHash(sessionToken), service.now())
+type EnrollmentVerifier interface {
+	Verify(nonce, accessToken, tellerUserID, enrollmentID, environment string, signatures []string) error
+}
+
+func (service Service) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
+	now := service.now()
+	session, err := service.Sessions.GetConnectSession(ctx, modelsHash(sessionToken), now)
 	if err != nil {
-		return fmt.Errorf("consume connect session: %w", err)
+		return fmt.Errorf("get connect session: %w", err)
+	}
+	if err := service.Verifier.Verify(session.Nonce, accessToken, tellerUserID, enrollmentID, service.Environment, signatures); err != nil {
+		return fmt.Errorf("verify teller enrollment: %w", err)
 	}
 	accounts, err := service.Client.ListAccounts(ctx, accessToken)
 	if err != nil {
@@ -141,10 +157,11 @@ func (service Service) Complete(ctx context.Context, sessionToken, accessToken, 
 	if err != nil {
 		return fmt.Errorf("encrypt teller token: %w", err)
 	}
-	if err := service.Users.SaveTellerConnection(ctx, session.UserID, accounts[0], enrollmentID, tellerUserID, ciphertext, nonce, service.Environment); err != nil {
-		return err
+	transactions, err := service.Client.ListTransactions(ctx, accessToken, accounts[0].ID, now.AddDate(0, 0, -30).Format("2006-01-02"), now.Format("2006-01-02"))
+	if err != nil {
+		return fmt.Errorf("list initial teller transactions: %w", err)
 	}
-	return service.SyncUser(ctx, session.UserID, true)
+	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], EnrollmentID: enrollmentID, TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
 }
 func (service Service) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
 	user, err := service.Users.GetUser(ctx, userID)
@@ -181,6 +198,62 @@ func (service Service) now() time.Time {
 	return time.Now().UTC()
 }
 func modelsHash(token string) []byte { sum := sha256.Sum256([]byte(token)); return sum[:] }
+
+// Ed25519EnrollmentVerifier verifies the signed payload returned by Teller
+// Connect when initialized with a server-generated nonce.
+type Ed25519EnrollmentVerifier struct{ PublicKey ed25519.PublicKey }
+
+func NewEd25519EnrollmentVerifier(encodedKey string) (*Ed25519EnrollmentVerifier, error) {
+	key, err := decodeEd25519PublicKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	return &Ed25519EnrollmentVerifier{PublicKey: key}, nil
+}
+
+func (verifier Ed25519EnrollmentVerifier) Verify(nonce, accessToken, tellerUserID, enrollmentID, environment string, signatures []string) error {
+	if nonce == "" || accessToken == "" || tellerUserID == "" || enrollmentID == "" || environment == "" {
+		return errors.New("incomplete signed enrollment")
+	}
+	digest := sha256.Sum256([]byte(strings.Join([]string{nonce, accessToken, tellerUserID, enrollmentID, environment}, ".")))
+	for _, encodedSignature := range signatures {
+		signature, err := decodeBase64OrHex(encodedSignature)
+		if err == nil && ed25519.Verify(verifier.PublicKey, digest[:], signature) {
+			return nil
+		}
+	}
+	return errors.New("invalid teller enrollment signature")
+}
+
+func decodeEd25519PublicKey(value string) (ed25519.PublicKey, error) {
+	if block, _ := pem.Decode([]byte(value)); block != nil {
+		key, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse Teller signing key: %w", err)
+		}
+		publicKey, ok := key.(ed25519.PublicKey)
+		if !ok {
+			return nil, errors.New("Teller signing key is not Ed25519")
+		}
+		return publicKey, nil
+	}
+	key, err := decodeBase64OrHex(value)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return nil, errors.New("invalid Teller Ed25519 signing key")
+	}
+	return ed25519.PublicKey(key), nil
+}
+
+func decodeBase64OrHex(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	for _, decoder := range []func(string) ([]byte, error){base64.StdEncoding.DecodeString, base64.RawStdEncoding.DecodeString, base64.URLEncoding.DecodeString, base64.RawURLEncoding.DecodeString, hex.DecodeString} {
+		decoded, err := decoder(value)
+		if err == nil {
+			return decoded, nil
+		}
+	}
+	return nil, errors.New("invalid encoded value")
+}
 
 type AESGCM struct{ block cryptocipher.Block }
 

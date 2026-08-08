@@ -11,7 +11,6 @@ type User struct {
 	ID                     UserID
 	TelegramConversationID int64
 	TellerAccountID        string
-	TellerEnrollmentID     string
 	TellerUserID           string
 	AccessTokenCiphertext  []byte
 	AccessTokenNonce       []byte
@@ -33,7 +32,6 @@ type ConnectSession struct {
 type ConnectCompletion struct {
 	TokenHash        []byte
 	Account          Account
-	EnrollmentID     string
 	TellerUserID     string
 	AccessToken      []byte
 	AccessTokenNonce []byte
@@ -43,14 +41,13 @@ type ConnectCompletion struct {
 }
 
 type Account struct {
-	ID           string
-	EnrollmentID string
-	Name         string
-	Type         string
-	Subtype      string
-	Currency     string
-	LastFour     string
-	Status       string
+	ID       string
+	Name     string
+	Type     string
+	Subtype  string
+	Currency string
+	LastFour string
+	Status   string
 }
 
 type Transaction struct {
@@ -74,7 +71,7 @@ type UserStore interface {
 	GetOrCreateUser(ctx context.Context, conversationID int64) (User, error)
 	GetUser(ctx context.Context, userID UserID) (User, error)
 	ListConnectedUsers(ctx context.Context) ([]User, error)
-	SaveTellerConnection(ctx context.Context, userID UserID, account Account, enrollmentID, tellerUserID string, ciphertext, nonce []byte, environment string) error
+	SaveTellerConnection(ctx context.Context, userID UserID, account Account, tellerUserID string, ciphertext, nonce []byte, environment string) error
 	MarkBaselineComplete(ctx context.Context, userID UserID, at time.Time) error
 }
 

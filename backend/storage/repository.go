@@ -35,13 +35,17 @@ func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID
 func (repository Repository) GetUser(ctx context.Context, userID models.UserID) (models.User, error) {
 	var user models.User
 	var baseline sql.NullInt64
-	err := repository.DB.QueryRowContext(ctx, `SELECT id, telegram_conversation_id, COALESCE(teller_account_id,''), COALESCE(teller_enrollment_id,''), COALESCE(teller_user_id,''), teller_access_token_ciphertext, teller_access_token_nonce, COALESCE(teller_environment,''), baseline_completed_at FROM users WHERE id = ?`, userID).Scan(&user.ID, &user.TelegramConversationID, &user.TellerAccountID, &user.TellerEnrollmentID, &user.TellerUserID, &user.AccessTokenCiphertext, &user.AccessTokenNonce, &user.TellerEnvironment, &baseline)
+	var accountID, tellerUserID, environment sql.NullString
+	err := repository.DB.QueryRowContext(ctx, `SELECT id, telegram_conversation_id, teller_account_id, teller_user_id, teller_access_token_ciphertext, teller_access_token_nonce, teller_environment, baseline_completed_at FROM users WHERE id = ?`, userID).Scan(&user.ID, &user.TelegramConversationID, &accountID, &tellerUserID, &user.AccessTokenCiphertext, &user.AccessTokenNonce, &environment, &baseline)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, ErrNotFound
 	}
 	if err != nil {
 		return models.User{}, fmt.Errorf("get user: %w", err)
 	}
+	user.TellerAccountID = accountID.String
+	user.TellerUserID = tellerUserID.String
+	user.TellerEnvironment = environment.String
 	if baseline.Valid {
 		value := time.Unix(baseline.Int64, 0).UTC()
 		user.BaselineCompletedAt = &value
@@ -82,8 +86,8 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 	return users, nil
 }
 
-func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, enrollmentID, tellerUserID string, ciphertext, nonce []byte, environment string) error {
-	result, err := repository.DB.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_enrollment_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, enrollmentID, tellerUserID, ciphertext, nonce, environment, userID)
+func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, tellerUserID string, ciphertext, nonce []byte, environment string) error {
+	result, err := repository.DB.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, tellerUserID, ciphertext, nonce, environment, userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
 	}
@@ -157,7 +161,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM teller_connect_sessions WHERE token_hash=?`, completion.TokenHash).Scan(&userID); err != nil {
 		return fmt.Errorf("get connect session user: %w", err)
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_enrollment_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.Account.ID, completion.EnrollmentID, completion.TellerUserID, completion.AccessToken, completion.AccessTokenNonce, completion.Environment, completion.CompletedAt.Unix(), userID)
+	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.Account.ID, completion.TellerUserID, completion.AccessToken, completion.AccessTokenNonce, completion.Environment, completion.CompletedAt.Unix(), userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
 	}

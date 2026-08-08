@@ -42,21 +42,20 @@ func NewHTTPClient(certPEM, keyPEM string) (*HTTPClient, error) {
 
 func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]models.Account, error) {
 	var response []struct {
-		ID           string `json:"id"`
-		EnrollmentID string `json:"enrollment_id"`
-		Name         string `json:"name"`
-		Type         string `json:"type"`
-		Subtype      string `json:"subtype"`
-		Currency     string `json:"currency"`
-		LastFour     string `json:"last_four"`
-		Status       string `json:"status"`
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Subtype  string `json:"subtype"`
+		Currency string `json:"currency"`
+		LastFour string `json:"last_four"`
+		Status   string `json:"status"`
 	}
 	if err := client.get(ctx, token, "/accounts", &response); err != nil {
 		return nil, err
 	}
 	accounts := make([]models.Account, len(response))
 	for i, a := range response {
-		accounts[i] = models.Account{ID: a.ID, EnrollmentID: a.EnrollmentID, Name: a.Name, Type: a.Type, Subtype: a.Subtype, Currency: a.Currency, LastFour: a.LastFour, Status: a.Status}
+		accounts[i] = models.Account{ID: a.ID, Name: a.Name, Type: a.Type, Subtype: a.Subtype, Currency: a.Currency, LastFour: a.LastFour, Status: a.Status}
 	}
 	return accounts, nil
 }
@@ -161,7 +160,7 @@ func (service Service) Complete(ctx context.Context, sessionToken, accessToken, 
 	if err != nil {
 		return fmt.Errorf("list initial teller transactions: %w", err)
 	}
-	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], EnrollmentID: enrollmentID, TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
+	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
 }
 func (service Service) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
 	user, err := service.Users.GetUser(ctx, userID)

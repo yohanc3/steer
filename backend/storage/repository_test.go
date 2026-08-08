@@ -81,7 +81,7 @@ func TestListConnectedUsersReleasesRowsBeforeLoadingUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SaveTellerConnection(context.Background(), user.ID, models.Account{ID: "acc"}, "enr", "usr", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
+	if err := repository.SaveTellerConnection(context.Background(), user.ID, models.Account{ID: "acc"}, "usr", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -114,10 +114,10 @@ func TestFinalizeConnectSessionIsAtomicAndSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SaveTellerConnection(context.Background(), otherUser.ID, models.Account{ID: "acc-in-use"}, "enr-existing", "usr-existing", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
+	if err := repository.SaveTellerConnection(context.Background(), otherUser.ID, models.Account{ID: "acc-in-use"}, "usr-existing", []byte("ciphertext"), []byte("nonce"), "sandbox"); err != nil {
 		t.Fatal(err)
 	}
-	completion := models.ConnectCompletion{TokenHash: token, Account: models.Account{ID: "acc-in-use"}, EnrollmentID: "enr", TellerUserID: "usr", AccessToken: []byte("ciphertext"), AccessTokenNonce: []byte("nonce"), Environment: "sandbox", CompletedAt: time.Now()}
+	completion := models.ConnectCompletion{TokenHash: token, Account: models.Account{ID: "acc-in-use"}, TellerUserID: "usr", AccessToken: []byte("ciphertext"), AccessTokenNonce: []byte("nonce"), Environment: "sandbox", CompletedAt: time.Now()}
 	if err := repository.FinalizeConnectSession(context.Background(), completion); err == nil {
 		t.Fatal("finalization with duplicate account succeeded")
 	}

@@ -23,7 +23,7 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{pending}, true); err != nil {
 		t.Fatal(err)
 	}
-	start, err := repository.SyncStartDate(context.Background(), user.ID)
+	start, err := repository.SyncStartDate(context.Background(), user.ID, "acc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,12 +37,36 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{complete}, false); err != nil {
 		t.Fatal(err)
 	}
-	start, err = repository.SyncStartDate(context.Background(), user.ID)
+	start, err = repository.SyncStartDate(context.Background(), user.ID, "acc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if start != "2026-08-03" {
 		t.Fatalf("start = %q", start)
+	}
+}
+
+func TestSyncStartDateIsScopedToAccount(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := Repository{DB: db}
+	user, err := repository.GetOrCreateUser(context.Background(), 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := models.Transaction{ID: "txn-old-account", AccountID: "acc-old", Amount: "-1.00", Date: "2026-08-03", Description: "old", Status: "pending", Type: "card_payment", ProcessingStatus: "pending", SelfLink: "self", AccountLink: "account"}
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{transaction}, true); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repository.SyncStartDate(context.Background(), user.ID, "acc-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != "" {
+		t.Fatalf("start = %q, want empty cursor", start)
 	}
 }
 

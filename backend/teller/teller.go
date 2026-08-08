@@ -172,7 +172,7 @@ func (service Service) SyncUser(ctx context.Context, userID models.UserID, basel
 	if err != nil {
 		return err
 	}
-	start, err := service.Transactions.SyncStartDate(ctx, userID)
+	start, err := service.Transactions.SyncStartDate(ctx, userID, user.TellerAccountID)
 	if err != nil {
 		return err
 	}

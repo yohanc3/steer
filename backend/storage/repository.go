@@ -192,11 +192,11 @@ func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models
 	return nil
 }
 
-func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID) (string, error) {
+func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID, accountID string) (string, error) {
 	var date string
-	err := repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID).Scan(&date)
+	err := repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID).Scan(&date)
+		err = repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID, accountID).Scan(&date)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

@@ -72,6 +72,12 @@ type Transaction struct {
 	AccountLink      string
 }
 
+// AccountBalances is Teller's live balance view for a connected account.
+type AccountBalances struct {
+	Available *string
+	Ledger    *string
+}
+
 // UserStore persists local users and their Teller connection metadata.
 type UserStore interface {
 	GetOrCreateUser(ctx context.Context, conversationID int64) (User, error)

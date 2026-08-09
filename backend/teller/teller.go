@@ -26,6 +26,7 @@ import (
 type TellerClient interface {
 	ListAccounts(ctx context.Context, accessToken string) ([]models.Account, error)
 	ListTransactions(ctx context.Context, accessToken, accountID, startDate, endDate string) ([]models.Transaction, error)
+	GetBalances(ctx context.Context, accessToken, accountID string) (models.AccountBalances, error)
 }
 
 // TellerHTTPClient is the mutual-TLS implementation of TellerClient.
@@ -116,6 +117,18 @@ func (tellerClient *TellerHTTPClient) ListTransactions(ctx context.Context, acce
 		transactions[i] = models.Transaction{ID: t.ID, AccountID: t.AccountID, Amount: t.Amount, Date: t.Date, Description: t.Description, Status: t.Status, Type: t.Type, RunningBalance: t.RunningBalance, ProcessingStatus: t.Details.ProcessingStatus, Category: t.Details.Category, CounterpartyName: t.Details.Counterparty.Name, CounterpartyType: t.Details.Counterparty.Type, SelfLink: t.Links.Self, AccountLink: t.Links.Account}
 	}
 	return transactions, nil
+}
+
+// GetBalances fetches Teller's current available and ledger balances for an account.
+func (tellerClient *TellerHTTPClient) GetBalances(ctx context.Context, accessToken, accountID string) (models.AccountBalances, error) {
+	var response struct {
+		Available *string `json:"available"`
+		Ledger    *string `json:"ledger"`
+	}
+	if err := tellerClient.get(ctx, accessToken, "/accounts/"+url.PathEscape(accountID)+"/balances", &response); err != nil {
+		return models.AccountBalances{}, err
+	}
+	return models.AccountBalances{Available: response.Available, Ledger: response.Ledger}, nil
 }
 
 // get issues an authenticated Teller GET request and decodes its JSON response.
@@ -236,6 +249,26 @@ func (tellerService TellerService) SyncUser(ctx context.Context, userID models.U
 		return tellerService.UserStore.MarkBaselineComplete(ctx, userID, tellerService.now())
 	}
 	return nil
+}
+
+// AvailableBalance decrypts a user's token only while fetching their live Teller balance.
+func (tellerService TellerService) AvailableBalance(ctx context.Context, userID models.UserID) (string, error) {
+	user, err := tellerService.UserStore.GetUser(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	token, err := tellerService.AccessTokenCipher.Decrypt(user.AccessTokenCiphertext, user.AccessTokenNonce)
+	if err != nil {
+		return "", err
+	}
+	balances, err := tellerService.TellerClient.GetBalances(ctx, string(token), user.TellerAccountID)
+	if err != nil {
+		return "", err
+	}
+	if balances.Available == nil {
+		return "", fmt.Errorf("available balance is not provided")
+	}
+	return *balances.Available, nil
 }
 
 // now returns the injected clock when testing or the current UTC time in production.

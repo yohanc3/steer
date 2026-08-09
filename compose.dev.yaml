@@ -9,6 +9,10 @@ services:
       nginx:
         condition: service_healthy
 
+  nginx:
+    ports:
+      - "8080:8080"
+
   predeployment_register_webhook:
     build:
       context: .

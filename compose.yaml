@@ -6,6 +6,7 @@ services:
     command: ["chown", "-R", "10001:10001", "/data"]
     volumes:
       - steer-data:/data
+      - ./backups:/backups
 
   predeployment_validate:
     build:
@@ -70,14 +71,6 @@ services:
       timeout: 3s
       retries: 6
       start_period: 5s
-
-  backup:
-    build:
-      context: .
-      dockerfile: deployment/backup/Dockerfile
-    volumes:
-      - steer-data:/data
-      - ./backups:/backups
 
 volumes:
   steer-data:

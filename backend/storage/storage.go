@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite"
@@ -47,6 +50,19 @@ func Open(ctx context.Context, databaseURL string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// Backup writes a consistent SQLite snapshot without interrupting application requests.
+func Backup(ctx context.Context, db *sql.DB, directory string, now time.Time) (string, error) {
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", fmt.Errorf("create backup directory: %w", err)
+	}
+
+	path := filepath.Join(directory, "steer-"+now.UTC().Format("20060102T150405Z")+".sqlite")
+	if _, err := db.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
+		return "", fmt.Errorf("create SQLite backup: %w", err)
+	}
+	return path, nil
 }
 
 func migrateUp(db *sql.DB) error {

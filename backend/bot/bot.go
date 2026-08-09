@@ -120,13 +120,11 @@ func transactionsHandler(
 		fields := strings.Fields(update.Message.Text)
 		verbose := len(fields) > 1 && strings.EqualFold(fields[1], "verbose")
 		var balance *string
-		if !verbose && transactions[0].RunningBalance == nil {
-			available, balanceErr := controller.BalanceProvider.AvailableBalance(ctx, user.ID)
-			if balanceErr == nil {
-				balance = &available
-			} else {
-				slog.Log(ctx, slog.LevelWarn, "get available balance", "error", balanceErr)
-			}
+		available, balanceErr := controller.BalanceProvider.AvailableBalance(ctx, user.ID)
+		if balanceErr == nil {
+			balance = &available
+		} else {
+			slog.Log(ctx, slog.LevelWarn, "get available balance", "error", balanceErr)
 		}
 		for _, text := range formatTransactionMessages(transactions, verbose, balance) {
 			params := &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: text}
@@ -146,10 +144,10 @@ func formatTransactionMessages(
 	verbose bool,
 	availableBalance *string,
 ) []string {
-	if len(transactions) == 0 {
-		return []string{"No transactions in this period."}
-	}
 	lines := make([]string, 0, len(transactions))
+	if len(transactions) == 0 {
+		lines = append(lines, "No transactions in this period.")
+	}
 	for _, transaction := range transactions {
 		if verbose {
 			lines = append(lines, strings.Join([]string{
@@ -176,13 +174,14 @@ func formatTransactionMessages(
 			lines = append(lines, line)
 		}
 	}
-	if !verbose {
-		balance := transactions[0].RunningBalance
-		if balance == nil {
-			balance = availableBalance
-		}
-		if balance != nil {
-			lines = append(lines, "<b>Available balance</b>\n"+html.EscapeString(formatBalance(*balance)))
+	if availableBalance != nil {
+		if verbose {
+			lines = append(lines, "Available balance: "+formatBalance(*availableBalance))
+		} else {
+			lines = append(
+				lines,
+				"<b>Available balance</b>\n"+html.EscapeString(formatBalance(*availableBalance)),
+			)
 		}
 	}
 	return splitTelegramMessages(lines)

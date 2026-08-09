@@ -44,10 +44,22 @@ func TestRegisterWebhookReportsTelegramFailure(t *testing.T) {
 
 func TestFormatTransactionMessagesAddsReadableAmountDateAndBalance(t *testing.T) {
 	balance := "125.50"
-	messages := formatTransactionMessages([]models.Transaction{{Amount: "-12.30", Date: "2026-08-06", Description: "Coffee", Status: "posted", RunningBalance: &balance}}, false, nil)
+	messages := formatTransactionMessages(
+		[]models.Transaction{{Amount: "-12.30", Date: "2026-08-06", Description: "Coffee", Status: "posted", RunningBalance: &balance}},
+		false,
+		&balance,
+	)
 	for _, expected := range []string{"<b>-$12.30</b>", "Thu, Aug 6th 2026", "<b>Available balance</b>", "$125.50"} {
 		if !strings.Contains(messages[0], expected) {
 			t.Fatalf("message missing %q: %s", expected, messages[0])
 		}
+	}
+}
+
+func TestFormatTransactionMessagesUsesLiveBalanceForEmptyHistory(t *testing.T) {
+	balance := "125.50"
+	messages := formatTransactionMessages(nil, false, &balance)
+	if len(messages) != 1 || !strings.Contains(messages[0], "Available balance") {
+		t.Fatalf("messages = %#v", messages)
 	}
 }

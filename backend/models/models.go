@@ -30,14 +30,14 @@ type ConnectSession struct {
 // Persisting it consumes the session, saves the connection, and imports the
 // initial baseline as one database transaction.
 type ConnectCompletion struct {
-	TokenHash        []byte
-	Account          Account
-	TellerUserID     string
-	AccessToken      []byte
-	AccessTokenNonce []byte
-	Environment      string
-	Transactions     []Transaction
-	CompletedAt      time.Time
+	TokenHash            []byte
+	TellerAccount        Account
+	TellerUserID         string
+	EncryptedAccessToken []byte
+	AccessTokenNonce     []byte
+	TellerEnvironment    string
+	BaselineTransactions []Transaction
+	CompletedAt          time.Time
 }
 
 type Account struct {

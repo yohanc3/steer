@@ -61,7 +61,7 @@ func TestOpenMigratesLegacyDatabaseToTellerPollingSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	repository := Repository{DB: db}
+	repository := Repository{Database: db}
 	user, err := repository.GetUser(context.Background(), "7")
 	if err != nil {
 		t.Fatal(err)

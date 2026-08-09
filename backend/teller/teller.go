@@ -22,29 +22,31 @@ import (
 	"yohanc3/steer/models"
 )
 
-type Client interface {
+// TellerClient fetches accounts and transactions from Teller.
+type TellerClient interface {
 	ListAccounts(ctx context.Context, accessToken string) ([]models.Account, error)
 	ListTransactions(ctx context.Context, accessToken, accountID, startDate, endDate string) ([]models.Transaction, error)
 }
 
-type HTTPClient struct {
-	client  *http.Client
-	baseURL string
+// TellerHTTPClient is the mutual-TLS implementation of TellerClient.
+type TellerHTTPClient struct {
+	httpClient *http.Client
+	baseURL    string
 }
 
-// NewHTTPClient creates the mutual-TLS client used for Teller API calls.
+// NewTellerHTTPClient creates the mutual-TLS client used for Teller API calls.
 // The PEM certificate and private key must be issued for the Teller application.
-func NewHTTPClient(certPEM, keyPEM string) (*HTTPClient, error) {
+func NewTellerHTTPClient(certPEM, keyPEM string) (*TellerHTTPClient, error) {
 	certificate, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
 	if err != nil {
 		return nil, fmt.Errorf("load teller certificate: %w", err)
 	}
-	return &HTTPClient{baseURL: "https://api.teller.io", client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}}}}, nil
+	return &TellerHTTPClient{baseURL: "https://api.teller.io", httpClient: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}}}}, nil
 }
 
 // ListAccounts fetches the accounts authorized by an access token.
 // The token must be valid for the configured Teller API environment.
-func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]models.Account, error) {
+func (tellerClient *TellerHTTPClient) ListAccounts(ctx context.Context, accessToken string) ([]models.Account, error) {
 	var response []struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
@@ -54,7 +56,7 @@ func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]mod
 		LastFour string `json:"last_four"`
 		Status   string `json:"status"`
 	}
-	if err := client.get(ctx, token, "/accounts", &response); err != nil {
+	if err := tellerClient.get(ctx, accessToken, "/accounts", &response); err != nil {
 		return nil, err
 	}
 	accounts := make([]models.Account, len(response))
@@ -66,7 +68,7 @@ func (client *HTTPClient) ListAccounts(ctx context.Context, token string) ([]mod
 
 // ListTransactions fetches an account's transactions within an inclusive date window.
 // Token, account ID, and dates must be valid Teller API request values.
-func (client *HTTPClient) ListTransactions(ctx context.Context, token, accountID, startDate, endDate string) ([]models.Transaction, error) {
+func (tellerClient *TellerHTTPClient) ListTransactions(ctx context.Context, accessToken, accountID, startDate, endDate string) ([]models.Transaction, error) {
 	path := "/accounts/" + url.PathEscape(accountID) + "/transactions?start_date=" + url.QueryEscape(startDate) + "&end_date=" + url.QueryEscape(endDate)
 	var response []struct {
 		ID             string  `json:"id"`
@@ -90,7 +92,7 @@ func (client *HTTPClient) ListTransactions(ctx context.Context, token, accountID
 			Account string `json:"account"`
 		} `json:"links"`
 	}
-	if err := client.get(ctx, token, path, &response); err != nil {
+	if err := tellerClient.get(ctx, accessToken, path, &response); err != nil {
 		return nil, err
 	}
 	transactions := make([]models.Transaction, len(response))
@@ -102,13 +104,13 @@ func (client *HTTPClient) ListTransactions(ctx context.Context, token, accountID
 
 // get issues an authenticated Teller GET request and decodes its JSON response.
 // The path must be API-relative and destination must accept the endpoint payload.
-func (client *HTTPClient) get(ctx context.Context, token, path string, destination any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+func (tellerClient *TellerHTTPClient) get(ctx context.Context, accessToken, path string, destination any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, tellerClient.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build teller request: %w", err)
 	}
-	request.SetBasicAuth(token, "")
-	response, err := client.client.Do(request)
+	request.SetBasicAuth(accessToken, "")
+	response, err := tellerClient.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("perform teller request: %w", err)
 	}
@@ -125,7 +127,8 @@ func (client *HTTPClient) get(ctx context.Context, token, path string, destinati
 	return nil
 }
 
-type Cipher interface {
+// AccessTokenCipher encrypts Teller access tokens before persistent storage.
+type AccessTokenCipher interface {
 	Encrypt([]byte) ([]byte, []byte, error)
 	Decrypt([]byte, []byte) ([]byte, error)
 }
@@ -133,14 +136,14 @@ type Cipher interface {
 // TellerService completes verified Teller Connect flows and synchronizes data.
 // Its dependencies must be configured with the application's persistent stores.
 type TellerService struct {
-	Client       Client
-	Users        models.UserStore
-	Sessions     models.ConnectSessionStore
-	Transactions models.TransactionStore
-	Cipher       Cipher
-	Verifier     EnrollmentVerifier
-	Environment  string
-	Now          func() time.Time
+	TellerClient        TellerClient
+	UserStore           models.UserStore
+	ConnectSessionStore models.ConnectSessionStore
+	TransactionStore    models.TransactionStore
+	AccessTokenCipher   AccessTokenCipher
+	EnrollmentVerifier  EnrollmentVerifier
+	TellerEnvironment   string
+	Clock               func() time.Time
 }
 
 type EnrollmentVerifier interface {
@@ -149,69 +152,69 @@ type EnrollmentVerifier interface {
 
 // Complete validates a browser enrollment and atomically stores its first sync.
 // The session token and signed Teller fields must originate from one Connect flow.
-func (service TellerService) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
-	now := service.now()
-	session, err := service.Sessions.GetConnectSession(ctx, modelsHash(sessionToken), now)
+func (tellerService TellerService) Complete(ctx context.Context, sessionToken, accessToken, enrollmentID, tellerUserID string, signatures []string) error {
+	now := tellerService.now()
+	session, err := tellerService.ConnectSessionStore.GetConnectSession(ctx, modelsHash(sessionToken), now)
 	if err != nil {
 		return fmt.Errorf("get connect session: %w", err)
 	}
-	if err := service.Verifier.Verify(session.Nonce, accessToken, tellerUserID, enrollmentID, service.Environment, signatures); err != nil {
+	if err := tellerService.EnrollmentVerifier.Verify(session.Nonce, accessToken, tellerUserID, enrollmentID, tellerService.TellerEnvironment, signatures); err != nil {
 		return fmt.Errorf("verify teller enrollment: %w", err)
 	}
-	accounts, err := service.Client.ListAccounts(ctx, accessToken)
+	accounts, err := tellerService.TellerClient.ListAccounts(ctx, accessToken)
 	if err != nil {
 		return fmt.Errorf("list teller accounts: %w", err)
 	}
 	if len(accounts) != 1 {
 		return fmt.Errorf("expected one teller account, got %d", len(accounts))
 	}
-	ciphertext, nonce, err := service.Cipher.Encrypt([]byte(accessToken))
+	ciphertext, nonce, err := tellerService.AccessTokenCipher.Encrypt([]byte(accessToken))
 	if err != nil {
 		return fmt.Errorf("encrypt teller token: %w", err)
 	}
-	transactions, err := service.Client.ListTransactions(ctx, accessToken, accounts[0].ID, now.AddDate(0, 0, -30).Format("2006-01-02"), now.Format("2006-01-02"))
+	transactions, err := tellerService.TellerClient.ListTransactions(ctx, accessToken, accounts[0].ID, now.AddDate(0, 0, -30).Format("2006-01-02"), now.Format("2006-01-02"))
 	if err != nil {
 		return fmt.Errorf("list initial teller transactions: %w", err)
 	}
-	return service.Sessions.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), Account: accounts[0], TellerUserID: tellerUserID, AccessToken: ciphertext, AccessTokenNonce: nonce, Environment: service.Environment, Transactions: transactions, CompletedAt: now})
+	return tellerService.ConnectSessionStore.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), TellerAccount: accounts[0], TellerUserID: tellerUserID, EncryptedAccessToken: ciphertext, AccessTokenNonce: nonce, TellerEnvironment: tellerService.TellerEnvironment, BaselineTransactions: transactions, CompletedAt: now})
 }
 
 // SyncUser fetches and stores new transactions for a connected Teller user.
 // The user must have encrypted credentials and an active Teller account.
-func (service TellerService) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
-	user, err := service.Users.GetUser(ctx, userID)
+func (tellerService TellerService) SyncUser(ctx context.Context, userID models.UserID, baseline bool) error {
+	user, err := tellerService.UserStore.GetUser(ctx, userID)
 	if err != nil {
 		return err
 	}
-	token, err := service.Cipher.Decrypt(user.AccessTokenCiphertext, user.AccessTokenNonce)
+	token, err := tellerService.AccessTokenCipher.Decrypt(user.AccessTokenCiphertext, user.AccessTokenNonce)
 	if err != nil {
 		return err
 	}
-	start, err := service.Transactions.SyncStartDate(ctx, userID, user.TellerAccountID)
+	start, err := tellerService.TransactionStore.SyncStartDate(ctx, userID, user.TellerAccountID)
 	if err != nil {
 		return err
 	}
 	if start == "" {
-		start = service.now().AddDate(0, 0, -30).Format("2006-01-02")
+		start = tellerService.now().AddDate(0, 0, -30).Format("2006-01-02")
 	}
-	transactions, err := service.Client.ListTransactions(ctx, string(token), user.TellerAccountID, start, service.now().Format("2006-01-02"))
+	transactions, err := tellerService.TellerClient.ListTransactions(ctx, string(token), user.TellerAccountID, start, tellerService.now().Format("2006-01-02"))
 	if err != nil {
 		return err
 	}
-	if err := service.Transactions.UpsertTransactions(ctx, userID, transactions, baseline); err != nil {
+	if err := tellerService.TransactionStore.UpsertTransactions(ctx, userID, transactions, baseline); err != nil {
 		return err
 	}
 	if baseline {
-		return service.Users.MarkBaselineComplete(ctx, userID, service.now())
+		return tellerService.UserStore.MarkBaselineComplete(ctx, userID, tellerService.now())
 	}
 	return nil
 }
 
 // now returns the injected clock when testing or the current UTC time in production.
 // An injected clock must return a value that can be converted to UTC.
-func (service TellerService) now() time.Time {
-	if service.Now != nil {
-		return service.Now().UTC()
+func (tellerService TellerService) now() time.Time {
+	if tellerService.Clock != nil {
+		return tellerService.Clock().UTC()
 	}
 	return time.Now().UTC()
 }

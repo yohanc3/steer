@@ -14,13 +14,13 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
-type Repository struct{ DB *sql.DB }
+type Repository struct{ Database *sql.DB }
 
 // GetOrCreateUser returns the local user for a Telegram conversation.
 // It looks up the conversation first and creates a UUID-backed user if absent.
 func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID int64) (models.User, error) {
 	var id string
-	err := repository.DB.QueryRowContext(ctx, `SELECT id FROM users WHERE telegram_conversation_id = ?`, conversationID).Scan(&id)
+	err := repository.Database.QueryRowContext(ctx, `SELECT id FROM users WHERE telegram_conversation_id = ?`, conversationID).Scan(&id)
 	if err == nil {
 		return repository.GetUser(ctx, models.UserID(id))
 	}
@@ -28,7 +28,7 @@ func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID
 		return models.User{}, fmt.Errorf("find user: %w", err)
 	}
 	id = uuid.NewString()
-	if _, err := repository.DB.ExecContext(ctx, `INSERT INTO users(id, telegram_conversation_id) VALUES (?, ?)`, id, conversationID); err != nil {
+	if _, err := repository.Database.ExecContext(ctx, `INSERT INTO users(id, telegram_conversation_id) VALUES (?, ?)`, id, conversationID); err != nil {
 		return models.User{}, fmt.Errorf("create user: %w", err)
 	}
 	return repository.GetUser(ctx, models.UserID(id))
@@ -40,7 +40,7 @@ func (repository Repository) GetUser(ctx context.Context, userID models.UserID) 
 	var user models.User
 	var baseline sql.NullInt64
 	var accountID, tellerUserID, environment sql.NullString
-	err := repository.DB.QueryRowContext(ctx, `SELECT id, telegram_conversation_id, teller_account_id, teller_user_id, teller_access_token_ciphertext, teller_access_token_nonce, teller_environment, baseline_completed_at FROM users WHERE id = ?`, userID).Scan(&user.ID, &user.TelegramConversationID, &accountID, &tellerUserID, &user.AccessTokenCiphertext, &user.AccessTokenNonce, &environment, &baseline)
+	err := repository.Database.QueryRowContext(ctx, `SELECT id, telegram_conversation_id, teller_account_id, teller_user_id, teller_access_token_ciphertext, teller_access_token_nonce, teller_environment, baseline_completed_at FROM users WHERE id = ?`, userID).Scan(&user.ID, &user.TelegramConversationID, &accountID, &tellerUserID, &user.AccessTokenCiphertext, &user.AccessTokenNonce, &environment, &baseline)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, ErrNotFound
 	}
@@ -60,7 +60,7 @@ func (repository Repository) GetUser(ctx context.Context, userID models.UserID) 
 // ListConnectedUsers returns users whose encrypted Teller credentials are stored.
 // It closes the ID query before loading each user because SQLite has one connection.
 func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := repository.DB.QueryContext(ctx, `SELECT id FROM users WHERE teller_account_id IS NOT NULL AND teller_access_token_ciphertext IS NOT NULL`)
+	rows, err := repository.Database.QueryContext(ctx, `SELECT id FROM users WHERE teller_account_id IS NOT NULL AND teller_access_token_ciphertext IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("list connected users: %w", err)
 	}
@@ -95,7 +95,7 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 // SaveTellerConnection replaces a user's active Teller account and credentials.
 // The account and user must be valid Teller values and userID must already exist.
 func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, tellerUserID string, ciphertext, nonce []byte, environment string) error {
-	result, err := repository.DB.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, tellerUserID, ciphertext, nonce, environment, userID)
+	result, err := repository.Database.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, tellerUserID, ciphertext, nonce, environment, userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
 	}
@@ -112,7 +112,7 @@ func (repository Repository) SaveTellerConnection(ctx context.Context, userID mo
 // MarkBaselineComplete records when initial transaction classification finishes.
 // The timestamp is persisted in UTC seconds for an existing user.
 func (repository Repository) MarkBaselineComplete(ctx context.Context, userID models.UserID, at time.Time) error {
-	_, err := repository.DB.ExecContext(ctx, `UPDATE users SET baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, at.Unix(), userID)
+	_, err := repository.Database.ExecContext(ctx, `UPDATE users SET baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, at.Unix(), userID)
 	if err != nil {
 		return fmt.Errorf("mark baseline complete: %w", err)
 	}
@@ -122,7 +122,7 @@ func (repository Repository) MarkBaselineComplete(ctx context.Context, userID mo
 // CreateConnectSession stores a one-time, expiring Teller Connect session.
 // The caller must hash the browser token and provide a user-owned nonce.
 func (repository Repository) CreateConnectSession(ctx context.Context, session models.ConnectSession) error {
-	_, err := repository.DB.ExecContext(ctx, `INSERT INTO teller_connect_sessions(token_hash, user_id, nonce, expires_at) VALUES (?, ?, ?, ?)`, session.TokenHash, session.UserID, session.Nonce, session.ExpiresAt.Unix())
+	_, err := repository.Database.ExecContext(ctx, `INSERT INTO teller_connect_sessions(token_hash, user_id, nonce, expires_at) VALUES (?, ?, ?, ?)`, session.TokenHash, session.UserID, session.Nonce, session.ExpiresAt.Unix())
 	if err != nil {
 		return fmt.Errorf("create connect session: %w", err)
 	}
@@ -135,7 +135,7 @@ func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []
 	var session models.ConnectSession
 	var expires, consumed int64
 	var consumedNull sql.NullInt64
-	err := repository.DB.QueryRowContext(ctx, `SELECT token_hash, user_id, nonce, expires_at, consumed_at FROM teller_connect_sessions WHERE token_hash=?`, tokenHash).Scan(&session.TokenHash, &session.UserID, &session.Nonce, &expires, &consumedNull)
+	err := repository.Database.QueryRowContext(ctx, `SELECT token_hash, user_id, nonce, expires_at, consumed_at FROM teller_connect_sessions WHERE token_hash=?`, tokenHash).Scan(&session.TokenHash, &session.UserID, &session.Nonce, &expires, &consumedNull)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ConnectSession{}, ErrNotFound
 	}
@@ -158,7 +158,7 @@ func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []
 // its initial transaction baseline, and one-time session consumption.
 // Completion must contain a validated token hash, encrypted credentials, and data.
 func (repository Repository) FinalizeConnectSession(ctx context.Context, completion models.ConnectCompletion) error {
-	tx, err := repository.DB.BeginTx(ctx, nil)
+	tx, err := repository.Database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin connect completion: %w", err)
 	}
@@ -176,7 +176,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM teller_connect_sessions WHERE token_hash=?`, completion.TokenHash).Scan(&userID); err != nil {
 		return fmt.Errorf("get connect session user: %w", err)
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.Account.ID, completion.TellerUserID, completion.AccessToken, completion.AccessTokenNonce, completion.Environment, completion.CompletedAt.Unix(), userID)
+	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.TellerAccount.ID, completion.TellerUserID, completion.EncryptedAccessToken, completion.AccessTokenNonce, completion.TellerEnvironment, completion.CompletedAt.Unix(), userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
 	}
@@ -184,7 +184,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	if err != nil || changed != 1 {
 		return ErrNotFound
 	}
-	if err := upsertTransactions(ctx, tx, userID, completion.Transactions, true); err != nil {
+	if err := upsertTransactions(ctx, tx, userID, completion.BaselineTransactions, true); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -196,7 +196,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 // UpsertTransactions writes Teller transactions outside a connect finalization.
 // The user must exist; baseline controls how the supplied records are classified.
 func (repository Repository) UpsertTransactions(ctx context.Context, userID models.UserID, transactions []models.Transaction, baseline bool) error {
-	return upsertTransactions(ctx, repository.DB, userID, transactions, baseline)
+	return upsertTransactions(ctx, repository.Database, userID, transactions, baseline)
 }
 
 type sqlExecutor interface {
@@ -257,9 +257,9 @@ func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models
 // The account ID scopes reconnects so prior accounts cannot advance its cursor.
 func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID, accountID string) (string, error) {
 	var date string
-	err := repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
+	err := repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = repository.DB.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID, accountID).Scan(&date)
+		err = repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID, accountID).Scan(&date)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+from predeployment.public_endpoint import PublicEndpointError, register_telegram_webhook, wait_for_public_health
 from predeployment.validation import ConfigurationError, validate_environment
 
 
@@ -58,3 +60,33 @@ class ValidateEnvironmentTests(unittest.TestCase):
             ConfigurationError, "DEPLOYMENT_PUBLIC_IP"
         ):
             validate_environment(environment)
+
+    @patch("predeployment.public_endpoint.urlopen")
+    def test_waits_for_successful_public_health(self, mocked_urlopen) -> None:
+        response = mocked_urlopen.return_value.__enter__.return_value
+        response.status = 200
+
+        wait_for_public_health(development_environment(), attempts=1)
+
+        mocked_urlopen.assert_called_once_with(
+            "https://example.ngrok-free.dev/healthz", timeout=5
+        )
+
+    @patch("predeployment.public_endpoint.urlopen")
+    def test_registers_telegram_webhook(self, mocked_urlopen) -> None:
+        response = mocked_urlopen.return_value.__enter__.return_value
+        response.read.return_value = b'{"ok": true}'
+
+        register_telegram_webhook(development_environment())
+
+        request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertIn(b"telegram%2Fwebhook", request.data)
+
+    @patch("predeployment.public_endpoint.urlopen")
+    def test_reports_telegram_rejection(self, mocked_urlopen) -> None:
+        response = mocked_urlopen.return_value.__enter__.return_value
+        response.read.return_value = b'{"ok": false, "description": "bad webhook"}'
+
+        with self.assertRaisesRegex(PublicEndpointError, "bad webhook"):
+            register_telegram_webhook(development_environment())

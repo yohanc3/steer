@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from predeployment.domain import verify_domain_points_to_deployment
 from predeployment.public_endpoint import PublicEndpointError, register_telegram_webhook, wait_for_public_health
 from predeployment.validation import ConfigurationError, validate_environment
 
@@ -90,3 +91,34 @@ class ValidateEnvironmentTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PublicEndpointError, "bad webhook"):
             register_telegram_webhook(development_environment())
+
+    @patch("predeployment.domain.socket.getaddrinfo")
+    def test_accepts_domain_at_expected_ip(self, mocked_getaddrinfo) -> None:
+        environment = development_environment()
+        environment.update(
+            {
+                "DEPLOYMENT_ENV": "prod",
+                "APP_DOMAIN": "steer.example.com",
+                "DEPLOYMENT_PUBLIC_IP": "203.0.113.1",
+                "LETSENCRYPT_EMAIL": "operator@example.com",
+                "PUBLIC_BASE_URL": "https://steer.example.com",
+            }
+        )
+        mocked_getaddrinfo.return_value = [
+            (None, None, None, None, ("203.0.113.1", 0)),
+        ]
+
+        verify_domain_points_to_deployment(environment)
+
+    @patch("predeployment.domain.socket.getaddrinfo")
+    def test_reports_domain_at_wrong_ip(self, mocked_getaddrinfo) -> None:
+        environment = development_environment()
+        environment.update(
+            {"APP_DOMAIN": "steer.example.com", "DEPLOYMENT_PUBLIC_IP": "203.0.113.1"}
+        )
+        mocked_getaddrinfo.return_value = [
+            (None, None, None, None, ("203.0.113.2", 0)),
+        ]
+
+        with self.assertRaisesRegex(PublicEndpointError, "update DNS"):
+            verify_domain_points_to_deployment(environment)

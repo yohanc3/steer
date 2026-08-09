@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOpenAppliesMigrationsIdempotently(t *testing.T) {
@@ -68,5 +69,25 @@ func TestOpenMigratesLegacyDatabaseToTellerPollingSchema(t *testing.T) {
 	}
 	if user.TelegramConversationID != 9 || user.TellerAccountID != "acc" || user.TellerUserID != "usr" {
 		t.Fatalf("migrated user = %#v", user)
+	}
+}
+
+func TestBackupWritesSQLiteSnapshot(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "steer.sqlite")
+	database, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	backupPath, err := Backup(context.Background(), database, t.TempDir(), time.Date(2026, 8, 9, 1, 2, 3, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(backupPath) != "steer-20260809T010203Z.sqlite" {
+		t.Fatalf("backup path = %s", backupPath)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatal(err)
 	}
 }

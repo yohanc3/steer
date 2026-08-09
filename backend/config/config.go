@@ -10,6 +10,7 @@ import (
 // Config contains runtime environment variables.
 type Config struct {
 	DatabaseURL                 string        `env:"DATABASE_URL,required"`
+	DatabaseBackupDirectory     string        `env:"DATABASE_BACKUP_DIRECTORY" envDefault:"/backups"`
 	PublicBaseURL               string        `env:"PUBLIC_BASE_URL,required"`
 	TelegramBotToken            string        `env:"TELEGRAM_BOT_TOKEN,required"`
 	TelegramWebhookSecret       string        `env:"TELEGRAM_WEBHOOK_SECRET,required"`
@@ -20,6 +21,7 @@ type Config struct {
 	TellerTokenSigningPublicKey string        `env:"TELLER_TOKEN_SIGNING_PUBLIC_KEY,required"`
 	TokenEncryptionKey          string        `env:"TOKEN_ENCRYPTION_KEY,required"`
 	TellerPollInterval          time.Duration `env:"TELLER_POLL_INTERVAL" envDefault:"30m"`
+	DatabaseBackupInterval      time.Duration `env:"DATABASE_BACKUP_INTERVAL" envDefault:"24h"`
 }
 
 // LoadConfig parses Config from process environment variables.

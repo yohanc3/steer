@@ -1,0 +1,9 @@
+.git
+.env*
+*.sqlite
+*.db
+backups/
+frontend/node_modules/
+frontend/dist/
+DEPLOYMENT_PLAN.md
+THOUGHTS.md

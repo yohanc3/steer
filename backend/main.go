@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"yohanc3/steer/storage"
 	"yohanc3/steer/teller"
 
+	telegrambot "github.com/go-telegram/bot"
 	"github.com/joho/godotenv"
 )
 
@@ -107,11 +109,13 @@ func run(parent context.Context) error {
 	// Start independent webhook and polling loops before opening the HTTP listener.
 	go telegramBot.StartWebhook(ctx)
 	go poll(ctx, tellerService, repository, appConfig.TellerPollInterval)
+	go backupDatabase(ctx, database, appConfig.DatabaseBackupDirectory, appConfig.DatabaseBackupInterval)
 
 	// Serve public HTTP routes until the listener fails or shutdown is requested.
 	server := &http.Server{Addr: ":8080", Handler: newAPIServer(telegramBot.WebhookHandler(), tellerService), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
+	go registerTelegramWebhook(ctx, telegramBot, appConfig.PublicBaseURL, appConfig.TelegramWebhookSecret)
 	select {
 	case serverErr := <-errs:
 		if !errors.Is(serverErr, http.ErrServerClosed) {
@@ -123,6 +127,47 @@ func run(parent context.Context) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdown)
+}
+
+// registerTelegramWebhook retries until the public gateway is ready to receive Telegram updates.
+func registerTelegramWebhook(ctx context.Context, telegramBot *telegrambot.Bot, publicBaseURL, secret string) {
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := applicationbot.RegisterWebhook(attempt, telegramBot, publicBaseURL, secret)
+		cancel()
+		if err == nil {
+			slog.Log(ctx, slog.LevelInfo, "registered Telegram webhook")
+			return
+		}
+		slog.Log(ctx, slog.LevelWarn, "register Telegram webhook", "error", err)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// backupDatabase creates a daily snapshot while retaining the running application's database.
+func backupDatabase(ctx context.Context, database *sql.DB, directory string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			path, err := storage.Backup(ctx, database, directory, now)
+			if err != nil {
+				slog.Log(ctx, slog.LevelError, "back up SQLite database", "error", err)
+				continue
+			}
+			slog.Log(ctx, slog.LevelInfo, "backed up SQLite database", "path", path)
+		}
+	}
+
 }
 
 // poll periodically synchronizes each connected Teller account.

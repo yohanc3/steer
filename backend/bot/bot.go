@@ -16,6 +16,10 @@ import (
 	"yohanc3/steer/storage"
 )
 
+type webhookRegistrar interface {
+	SetWebhook(context.Context, *telegrambot.SetWebhookParams) (bool, error)
+}
+
 // ConnectController creates one-time Teller Connect links for Telegram users.
 // Users and sessions must share the same persistent storage implementation.
 type ConnectController struct {
@@ -45,6 +49,22 @@ func RegisterCommands(ctx context.Context, telegramBot *telegrambot.Bot) error {
 	_, err := telegramBot.SetMyCommands(ctx, &telegrambot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}})
 	if err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)
+	}
+	return nil
+}
+
+// RegisterWebhook tells Telegram to deliver updates through the public Nginx gateway.
+func RegisterWebhook(ctx context.Context, telegramBot webhookRegistrar, publicBaseURL, secret string) error {
+	registered, err := telegramBot.SetWebhook(ctx, &telegrambot.SetWebhookParams{
+		URL:            publicBaseURL + "/telegram/webhook",
+		SecretToken:    secret,
+		AllowedUpdates: []string{"message"},
+	})
+	if err != nil {
+		return fmt.Errorf("set Telegram webhook: %w", err)
+	}
+	if !registered {
+		return fmt.Errorf("set Telegram webhook: Telegram rejected the request")
 	}
 	return nil
 }

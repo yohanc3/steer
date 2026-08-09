@@ -1,0 +1,62 @@
+name: steer
+
+services:
+  database_initialize:
+    image: alpine:3.21
+    command: ["chown", "-R", "10001:10001", "/data"]
+    volumes:
+      - steer-data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: /data/steer.sqlite
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    volumes:
+      - steer-data:/data
+      - ./backups:/backups
+    depends_on:
+      database_initialize:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_TELLER_APPLICATION_ID: ${TELLER_APPLICATION_ID:-}
+        VITE_TELLER_ENVIRONMENT: ${TELLER_ENVIRONMENT:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./deployment/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/_gateway/healthz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  steer-data:

@@ -1,6 +1,12 @@
 name: steer
 
 services:
+  database_initialize:
+    image: alpine:3.21
+    command: ["chown", "-R", "10001:10001", "/data"]
+    volumes:
+      - steer-data:/data
+
   predeployment_validate:
     build:
       context: .
@@ -18,6 +24,8 @@ services:
     volumes:
       - steer-data:/data
     depends_on:
+      database_initialize:
+        condition: service_completed_successfully
       predeployment_validate:
         condition: service_completed_successfully
     healthcheck:

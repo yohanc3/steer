@@ -1,8 +1,8 @@
 # Steer
 
 Steer is a financial tracking app that notifies users how purchases affect their
-budgets in real time. Connect a read-only bank account through Telegram and
-receive timely spending updates where you already communicate.
+budgets in real time. Connect your account through Telegram and receive timely
+spending updates where you already communicate.
 
 ## Demo
 
@@ -20,8 +20,6 @@ _Incoming demo._
    800 rent, and 400 other expenses
    ```
 
-   _Budget commands are the intended next product workflow and are not yet
-   implemented in the current bot._
 4. That is it: Steer will notify you when a purchase affects your budget.
 
 You can already inspect synchronized transactions with `/transactions_24h`,
@@ -80,8 +78,6 @@ python3 cmd/deploy/deploy.py
 
 Use the output of `curl -4 https://icanhazip.com` as `DEPLOYMENT_PUBLIC_IP`,
 then point the DNS A record for the hostname in `PUBLIC_BASE_URL` to that IP.
-Use the machine or VPS public IP, not a Docker container IP: container addresses
-are private implementation details and change when containers are recreated.
 The deployment validates DNS before requesting its initial Let's Encrypt
 certificate.
 

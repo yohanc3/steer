@@ -4,7 +4,6 @@
 
 # Any .env file
 *.env
-.env.dev
 backend/steer-dev.sqlite*
 
 .DS_Store

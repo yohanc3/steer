@@ -2,15 +2,3 @@ services:
   nginx:
     ports:
       - "8080:8080"
-
-  predeployment_register_webhook:
-    build:
-      context: .
-      dockerfile: deployment/predeployment/Dockerfile
-    env_file: .env
-    command: ["register-webhook"]
-    depends_on:
-      predeployment_validate:
-        condition: service_completed_successfully
-      nginx:
-        condition: service_healthy

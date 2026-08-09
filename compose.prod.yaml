@@ -1,24 +1,13 @@
 services:
-  predeployment_verify_domain:
-    build:
-      context: .
-      dockerfile: deployment/predeployment/Dockerfile
-    env_file: .env
-    command: ["verify-domain"]
-    depends_on:
-      predeployment_validate:
-        condition: service_completed_successfully
-
-  predeployment_prepare_certificate:
+  certificate_prepare:
     build:
       context: .
       dockerfile: deployment/certificates/Dockerfile
     env_file: .env
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - nginx-certificates:/certs
-    depends_on:
-      predeployment_verify_domain:
-        condition: service_completed_successfully
 
   nginx:
     build:
@@ -29,8 +18,9 @@ services:
       - "443:443"
     volumes: !override
       - ./deployment/nginx/gateway.prod.conf:/etc/nginx/conf.d/default.conf:ro
-      - nginx-certificates:/etc/nginx/certs:ro
-      - certbot-webroot:/var/www/certbot:ro
+      - nginx-certificates:/etc/nginx/certs
+      - certbot-webroot:/var/www/certbot
+      - letsencrypt-data:/etc/letsencrypt
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/_gateway/healthz >/dev/null"]
       interval: 10s
@@ -38,7 +28,7 @@ services:
       retries: 6
       start_period: 5s
     depends_on:
-      predeployment_prepare_certificate:
+      certificate_prepare:
         condition: service_completed_successfully
 
   predeployment_issue_certificate:
@@ -52,44 +42,16 @@ services:
     command:
       - -ec
       - >-
+        domain="$${PUBLIC_BASE_URL#https://}"; domain="$${domain%%/*}";
         certbot certonly --webroot --webroot-path /var/www/certbot
         --email "$${LETSENCRYPT_EMAIL}" --agree-tos --non-interactive --keep-until-expiring
-        -d "$${APP_DOMAIN}" &&
-        cp -L /etc/letsencrypt/live/$${APP_DOMAIN}/fullchain.pem /certs/fullchain.pem &&
-        cp -L /etc/letsencrypt/live/$${APP_DOMAIN}/privkey.pem /certs/privkey.pem
+        -d "$${domain}" &&
+        cp -L /etc/letsencrypt/live/$${domain}/fullchain.pem /certs/fullchain.pem &&
+        cp -L /etc/letsencrypt/live/$${domain}/privkey.pem /certs/privkey.pem &&
+        touch /certs/.reload
     depends_on:
       nginx:
         condition: service_healthy
-
-  certbot_renew:
-    image: certbot/certbot:v3.3.0
-    env_file: .env
-    volumes:
-      - letsencrypt-data:/etc/letsencrypt
-      - certbot-webroot:/var/www/certbot
-      - nginx-certificates:/certs
-    entrypoint: /bin/sh
-    command:
-      - -ec
-      - >-
-        while true; do
-          certbot renew --webroot --webroot-path /var/www/certbot
-          --deploy-hook 'cp -L /etc/letsencrypt/live/$${APP_DOMAIN}/fullchain.pem /certs/fullchain.pem && cp -L /etc/letsencrypt/live/$${APP_DOMAIN}/privkey.pem /certs/privkey.pem';
-          sleep 43200;
-        done
-    depends_on:
-      predeployment_issue_certificate:
-        condition: service_completed_successfully
-
-  predeployment_register_webhook:
-    build:
-      context: .
-      dockerfile: deployment/predeployment/Dockerfile
-    env_file: .env
-    command: ["register-webhook"]
-    depends_on:
-      predeployment_issue_certificate:
-        condition: service_completed_successfully
 
 volumes:
   certbot-webroot:

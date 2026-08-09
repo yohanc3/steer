@@ -8,15 +8,6 @@ services:
       - steer-data:/data
       - ./backups:/backups
 
-  predeployment_validate:
-    build:
-      context: .
-      dockerfile: deployment/predeployment/Dockerfile
-    env_file: .env
-    environment:
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-    command: ["validate"]
-
   backend:
     build:
       context: .
@@ -29,8 +20,6 @@ services:
       - steer-data:/data
     depends_on:
       database_initialize:
-        condition: service_completed_successfully
-      predeployment_validate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
@@ -46,9 +35,6 @@ services:
       args:
         VITE_TELLER_APPLICATION_ID: ${TELLER_APPLICATION_ID:-}
         VITE_TELLER_ENVIRONMENT: ${TELLER_ENVIRONMENT:-}
-    depends_on:
-      predeployment_validate:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null"]
       interval: 10s

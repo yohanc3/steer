@@ -40,6 +40,7 @@ def validate_environment(environment: Mapping[str, str]) -> str:
         )
 
     if deployment == "dev":
+        _require(environment, "NGROK_AUTHTOKEN")
         _validate_endpoint(environment, "NGROK_DOMAIN")
     else:
         _validate_endpoint(environment, "APP_DOMAIN")

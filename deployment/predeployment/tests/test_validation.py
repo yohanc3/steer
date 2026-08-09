@@ -14,6 +14,7 @@ def development_environment() -> dict[str, str]:
     """Return a complete non-secret development environment for tests."""
     return {
         "DEPLOYMENT_ENV": "dev",
+        "NGROK_AUTHTOKEN": "ngrok-token",
         "NGROK_DOMAIN": "example.ngrok-free.dev",
         "PUBLIC_BASE_URL": "https://example.ngrok-free.dev",
         "TELEGRAM_BOT_TOKEN": "token",
@@ -49,6 +50,13 @@ class ValidateEnvironmentTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ConfigurationError, "PUBLIC_BASE_URL must equal"
         ):
+            validate_environment(environment)
+
+    def test_requires_ngrok_authtoken_for_development(self) -> None:
+        environment = development_environment()
+        del environment["NGROK_AUTHTOKEN"]
+
+        with self.assertRaisesRegex(ConfigurationError, "NGROK_AUTHTOKEN"):
             validate_environment(environment)
 
     def test_requires_production_endpoint_values(self) -> None:

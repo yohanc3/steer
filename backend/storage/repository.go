@@ -19,6 +19,7 @@ type Repository struct{ Database *sql.DB }
 // GetOrCreateUser returns the local user for a Telegram conversation.
 // It looks up the conversation first and creates a UUID-backed user if absent.
 func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID int64) (models.User, error) {
+	// Prefer the existing conversation mapping to keep user creation idempotent.
 	var id string
 	err := repository.Database.QueryRowContext(ctx, `SELECT id FROM users WHERE telegram_conversation_id = ?`, conversationID).Scan(&id)
 	if err == nil {
@@ -27,6 +28,7 @@ func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID
 	if !errors.Is(err, sql.ErrNoRows) {
 		return models.User{}, fmt.Errorf("find user: %w", err)
 	}
+	// Create a stable internal ID only after confirming the conversation is new.
 	id = uuid.NewString()
 	if _, err := repository.Database.ExecContext(ctx, `INSERT INTO users(id, telegram_conversation_id) VALUES (?, ?)`, id, conversationID); err != nil {
 		return models.User{}, fmt.Errorf("create user: %w", err)
@@ -37,6 +39,7 @@ func (repository Repository) GetOrCreateUser(ctx context.Context, conversationID
 // GetUser loads local and Teller connection state for a user ID.
 // The ID must refer to a persisted user; absent users return ErrNotFound.
 func (repository Repository) GetUser(ctx context.Context, userID models.UserID) (models.User, error) {
+	// Scan nullable connection state separately so unconnected users remain valid.
 	var user models.User
 	var baseline sql.NullInt64
 	var accountID, tellerUserID, environment sql.NullString
@@ -47,6 +50,7 @@ func (repository Repository) GetUser(ctx context.Context, userID models.UserID) 
 	if err != nil {
 		return models.User{}, fmt.Errorf("get user: %w", err)
 	}
+	// Convert nullable database fields into the model's zero-value representation.
 	user.TellerAccountID = accountID.String
 	user.TellerUserID = tellerUserID.String
 	user.TellerEnvironment = environment.String
@@ -60,6 +64,7 @@ func (repository Repository) GetUser(ctx context.Context, userID models.UserID) 
 // ListConnectedUsers returns users whose encrypted Teller credentials are stored.
 // It closes the ID query before loading each user because SQLite has one connection.
 func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.User, error) {
+	// Fetch IDs first so the rows cursor is closed before reusing SQLite's connection.
 	rows, err := repository.Database.QueryContext(ctx, `SELECT id FROM users WHERE teller_account_id IS NOT NULL AND teller_access_token_ciphertext IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("list connected users: %w", err)
@@ -81,6 +86,7 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 		return nil, fmt.Errorf("close connected user IDs: %w", err)
 	}
 
+	// Hydrate each connection only after the initial query has released the database.
 	users := make([]models.User, 0, len(ids))
 	for _, id := range ids {
 		user, err := repository.GetUser(ctx, id)
@@ -95,10 +101,12 @@ func (repository Repository) ListConnectedUsers(ctx context.Context) ([]models.U
 // SaveTellerConnection replaces a user's active Teller account and credentials.
 // The account and user must be valid Teller values and userID must already exist.
 func (repository Repository) SaveTellerConnection(ctx context.Context, userID models.UserID, account models.Account, tellerUserID string, ciphertext, nonce []byte, environment string) error {
+	// Replacing a connection resets its baseline so the selected account is reclassified.
 	result, err := repository.Database.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=NULL, updated_at=unixepoch() WHERE id=?`, account.ID, tellerUserID, ciphertext, nonce, environment, userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
 	}
+	// Distinguish an absent user from a successful update with no silent fallback.
 	changed, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("teller connection rows: %w", err)
@@ -112,6 +120,7 @@ func (repository Repository) SaveTellerConnection(ctx context.Context, userID mo
 // MarkBaselineComplete records when initial transaction classification finishes.
 // The timestamp is persisted in UTC seconds for an existing user.
 func (repository Repository) MarkBaselineComplete(ctx context.Context, userID models.UserID, at time.Time) error {
+	// Store UTC seconds so baseline state uses the same SQLite representation as sessions.
 	_, err := repository.Database.ExecContext(ctx, `UPDATE users SET baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, at.Unix(), userID)
 	if err != nil {
 		return fmt.Errorf("mark baseline complete: %w", err)
@@ -122,6 +131,7 @@ func (repository Repository) MarkBaselineComplete(ctx context.Context, userID mo
 // CreateConnectSession stores a one-time, expiring Teller Connect session.
 // The caller must hash the browser token and provide a user-owned nonce.
 func (repository Repository) CreateConnectSession(ctx context.Context, session models.ConnectSession) error {
+	// Persist only the token hash; the bearer token is never written to SQLite.
 	_, err := repository.Database.ExecContext(ctx, `INSERT INTO teller_connect_sessions(token_hash, user_id, nonce, expires_at) VALUES (?, ?, ?, ?)`, session.TokenHash, session.UserID, session.Nonce, session.ExpiresAt.Unix())
 	if err != nil {
 		return fmt.Errorf("create connect session: %w", err)
@@ -132,6 +142,7 @@ func (repository Repository) CreateConnectSession(ctx context.Context, session m
 // GetConnectSession returns a live, unconsumed session for a hashed browser token.
 // Expired, consumed, or unknown tokens deliberately return ErrNotFound.
 func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []byte, now time.Time) (models.ConnectSession, error) {
+	// Load the session before applying expiry and single-use checks in application time.
 	var session models.ConnectSession
 	var expires, consumed int64
 	var consumedNull sql.NullInt64
@@ -142,6 +153,7 @@ func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []
 	if err != nil {
 		return models.ConnectSession{}, fmt.Errorf("get connect session: %w", err)
 	}
+	// Reconstruct timestamps before rejecting consumed or expired sessions uniformly.
 	session.ExpiresAt = time.Unix(expires, 0)
 	if consumedNull.Valid {
 		consumed = consumedNull.Int64
@@ -158,12 +170,14 @@ func (repository Repository) GetConnectSession(ctx context.Context, tokenHash []
 // its initial transaction baseline, and one-time session consumption.
 // Completion must contain a validated token hash, encrypted credentials, and data.
 func (repository Repository) FinalizeConnectSession(ctx context.Context, completion models.ConnectCompletion) error {
+	// Keep session consumption, connection storage, and baseline import all-or-nothing.
 	tx, err := repository.Database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin connect completion: %w", err)
 	}
 	defer tx.Rollback()
 
+	// Atomically claim the still-live token before looking up its owning user.
 	var userID models.UserID
 	result, err := tx.ExecContext(ctx, `UPDATE teller_connect_sessions SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, completion.CompletedAt.Unix(), completion.TokenHash, completion.CompletedAt.Unix())
 	if err != nil {
@@ -176,6 +190,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM teller_connect_sessions WHERE token_hash=?`, completion.TokenHash).Scan(&userID); err != nil {
 		return fmt.Errorf("get connect session user: %w", err)
 	}
+	// Store the validated credentials and baseline timestamp for the session owner.
 	result, err = tx.ExecContext(ctx, `UPDATE users SET teller_account_id=?, teller_user_id=?, teller_access_token_ciphertext=?, teller_access_token_nonce=?, teller_environment=?, baseline_completed_at=?, updated_at=unixepoch() WHERE id=?`, completion.TellerAccount.ID, completion.TellerUserID, completion.EncryptedAccessToken, completion.AccessTokenNonce, completion.TellerEnvironment, completion.CompletedAt.Unix(), userID)
 	if err != nil {
 		return fmt.Errorf("save teller connection: %w", err)
@@ -184,6 +199,7 @@ func (repository Repository) FinalizeConnectSession(ctx context.Context, complet
 	if err != nil || changed != 1 {
 		return ErrNotFound
 	}
+	// Classify the initial window as baseline before committing every connection change.
 	if err := upsertTransactions(ctx, tx, userID, completion.BaselineTransactions, true); err != nil {
 		return err
 	}
@@ -244,6 +260,7 @@ ON CONFLICT(transaction_id) DO UPDATE SET
 // upsertTransactions executes transaction writes with a database or SQL transaction.
 // The executor must remain valid for every supplied transaction in the batch.
 func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models.UserID, transactions []models.Transaction, baseline bool) error {
+	// Apply each Teller record through the caller's database or transaction executor.
 	for _, transaction := range transactions {
 		_, err := executor.ExecContext(ctx, upsertTransactionSQL, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
 		if err != nil {
@@ -256,8 +273,10 @@ func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models
 // SyncStartDate returns the earliest pending or latest completed account date.
 // The account ID scopes reconnects so prior accounts cannot advance its cursor.
 func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID, accountID string) (string, error) {
+	// Pending records take priority so polling keeps revisiting unsettled transactions.
 	var date string
 	err := repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
+	// Otherwise continue from the newest completed transaction for this account only.
 	if errors.Is(err, sql.ErrNoRows) {
 		err = repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID, accountID).Scan(&date)
 	}

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
 	applicationbot "yohanc3/steer/bot"
 	"yohanc3/steer/config"
 	"yohanc3/steer/models"
@@ -24,8 +25,14 @@ import (
 func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerService) http.Handler {
 	controller := tellerConnectController{tellerService: tellerService}
 	mux := http.NewServeMux()
+
+	// Route Telegram updates directly to the library-provided webhook handler.
 	mux.Handle("POST /telegram/webhook", telegramHandler)
+
+	// Route browser completion callbacks through the Teller controller.
 	mux.HandleFunc("POST /api/teller/connect/complete", controller.complete)
+
+	// Expose a lightweight backend health endpoint for local orchestration.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -36,17 +43,24 @@ func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerServi
 // run constructs the application dependencies and serves HTTP until cancellation.
 // It requires complete runtime configuration, SQLite access, Telegram, and Teller credentials.
 func run(parent context.Context) error {
+	// Load local development values when present; deployed environments provide them directly.
 	_ = godotenv.Load()
+
+	// Parse all required runtime configuration before starting any dependency.
 	appConfig, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	// Open SQLite and apply pending migrations before serving any requests.
 	database, err := storage.Open(parent, appConfig.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
+	// Reuse one repository implementation for the service's related stores.
 	repository := storage.Repository{Database: database}
+
+	// Build the crypto and remote API dependencies needed for Teller operations.
 	accessTokenCipher, err := teller.NewAESGCM([]byte(appConfig.TokenEncryptionKey))
 	if err != nil {
 		return err
@@ -59,18 +73,42 @@ func run(parent context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create Teller enrollment verifier: %w", err)
 	}
-	tellerService := teller.TellerService{TellerClient: tellerClient, UserStore: repository, ConnectSessionStore: repository, TransactionStore: repository, AccessTokenCipher: accessTokenCipher, EnrollmentVerifier: enrollmentVerifier, TellerEnvironment: appConfig.TellerEnvironment}
-	telegramBot, err := applicationbot.New(appConfig.TelegramBotToken, appConfig.TelegramWebhookSecret, applicationbot.ConnectController{UserStore: repository, ConnectSessionStore: repository, PublicBaseURL: appConfig.PublicBaseURL})
+	// Assemble the Teller workflow from its explicit persistence and security dependencies.
+	tellerService := teller.TellerService{
+		TellerClient:        tellerClient,
+		UserStore:           repository,
+		ConnectSessionStore: repository,
+		TransactionStore:    repository,
+		AccessTokenCipher:   accessTokenCipher,
+		EnrollmentVerifier:  enrollmentVerifier,
+		TellerEnvironment:   appConfig.TellerEnvironment,
+	}
+
+	// Configure Telegram commands before accepting webhook traffic.
+	telegramBot, err := applicationbot.New(
+		appConfig.TelegramBotToken,
+		appConfig.TelegramWebhookSecret,
+		applicationbot.ConnectController{
+			UserStore:           repository,
+			ConnectSessionStore: repository,
+			PublicBaseURL:       appConfig.PublicBaseURL,
+		},
+	)
 	if err != nil {
 		return err
 	}
 	if err := applicationbot.RegisterCommands(parent, telegramBot); err != nil {
 		return err
 	}
+	// Cancel background work and begin HTTP shutdown when the process receives a signal.
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Start independent webhook and polling loops before opening the HTTP listener.
 	go telegramBot.StartWebhook(ctx)
 	go poll(ctx, tellerService, repository, appConfig.TellerPollInterval)
+
+	// Serve public HTTP routes until the listener fails or shutdown is requested.
 	server := &http.Server{Addr: ":8080", Handler: newAPIServer(telegramBot.WebhookHandler(), tellerService), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
@@ -81,6 +119,7 @@ func run(parent context.Context) error {
 		}
 	case <-ctx.Done():
 	}
+	// Bound graceful shutdown so process termination cannot wait indefinitely.
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdown)
@@ -91,15 +130,19 @@ func run(parent context.Context) error {
 func poll(ctx context.Context, tellerService teller.TellerService, userStore models.UserStore, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// List active users before syncing them one at a time.
 			connected, err := userStore.ListConnectedUsers(ctx)
 			if err != nil {
 				continue
 			}
+
+			// Isolate a failed account sync so other connected users still progress.
 			for _, user := range connected {
 				if err := tellerService.SyncUser(ctx, user.ID, false); err != nil {
 					slog.Log(ctx, slog.LevelError, "poll teller account", "user_id", user.ID, "error", err)

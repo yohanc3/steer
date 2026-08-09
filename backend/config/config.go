@@ -24,7 +24,9 @@ type Config struct {
 
 // LoadConfig parses Config from process environment variables.
 func LoadConfig() (*Config, error) {
+	// Parse environment variables once into the application's typed configuration.
 	var cfg Config
+
 	if err := env.Parse(&cfg); err != nil {
 		return nil, fmt.Errorf("parse environment: %w", err)
 	}

@@ -27,10 +27,13 @@ type ConnectController struct {
 // New creates a Telegram bot and registers the supported application commands.
 // The token and webhook secret must come from Telegram's BotFather configuration.
 func New(botToken, webhookSecret string, controller ConnectController) (*telegrambot.Bot, error) {
+	// Attach Telegram's shared-secret validation before registering commands.
 	telegramBot, err := telegrambot.New(botToken, telegrambot.WithWebhookSecretToken(webhookSecret))
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
 	}
+
+	// Match the standard /connect command and delegate its workflow to the controller.
 	telegramBot.RegisterHandler(telegrambot.HandlerTypeMessageText, "connect", telegrambot.MatchTypeCommand, controller.connect)
 	return telegramBot, nil
 }
@@ -38,6 +41,7 @@ func New(botToken, webhookSecret string, controller ConnectController) (*telegra
 // RegisterCommands publishes the bot's command menu to Telegram.
 // It requires a live bot and a context that remains valid for the API request.
 func RegisterCommands(ctx context.Context, telegramBot *telegrambot.Bot) error {
+	// Publish the command so Telegram clients can surface it in the command menu.
 	_, err := telegramBot.SetMyCommands(ctx, &telegrambot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}})
 	if err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)
@@ -48,10 +52,12 @@ func RegisterCommands(ctx context.Context, telegramBot *telegrambot.Bot) error {
 // connect creates an expiring browser link for a Telegram /connect command.
 // The update must contain a chat message and configured persistent stores.
 func (controller ConnectController) connect(ctx context.Context, telegramBot *telegrambot.Bot, update *telegram.Update) {
+	// Ignore non-message updates because they have no conversation to link.
 	if update.Message == nil {
 		return
 	}
 
+	// Resolve the local user before issuing a one-time browser session.
 	slog.Log(ctx, slog.LevelInfo, "handle connect command", "chat_id", update.Message.Chat.ID)
 	user, err := controller.UserStore.GetOrCreateUser(ctx, update.Message.Chat.ID)
 	if err != nil {
@@ -59,6 +65,7 @@ func (controller ConnectController) connect(ctx context.Context, telegramBot *te
 		return
 	}
 
+	// Generate and store a short-lived token that binds the browser to this user.
 	token, nonce, err := newConnectSession()
 	if err == nil {
 		err = controller.ConnectSessionStore.CreateConnectSession(ctx, models.ConnectSession{TokenHash: storage.HashToken(token), UserID: user.ID, Nonce: nonce, ExpiresAt: time.Now().Add(15 * time.Minute)})
@@ -69,6 +76,7 @@ func (controller ConnectController) connect(ctx context.Context, telegramBot *te
 		return
 	}
 
+	// Send both token and nonce so Teller Connect can return the signed enrollment.
 	slog.Log(ctx, slog.LevelInfo, "created teller connect session", "user_id", user.ID)
 	if _, err := telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
@@ -84,6 +92,7 @@ func (controller ConnectController) connect(ctx context.Context, telegramBot *te
 // newConnectSession creates independent random values for the URL token and nonce.
 // It requires cryptographic randomness from the operating system.
 func newConnectSession() (string, string, error) {
+	// Generate independent high-entropy values for bearer-token and signature uses.
 	raw := make([]byte, 32)
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

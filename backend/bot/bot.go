@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	telegrambot "github.com/go-telegram/bot"
@@ -20,12 +21,22 @@ type webhookRegistrar interface {
 	SetWebhook(context.Context, *telegrambot.SetWebhookParams) (bool, error)
 }
 
+var transactionPeriods = map[string]time.Duration{"transactions_24h": 24 * time.Hour, "transactions_3d": 3 * 24 * time.Hour, "transactions_7d": 7 * 24 * time.Hour, "transactions_30d": 30 * 24 * time.Hour}
+
 // ConnectController creates one-time Teller Connect links for Telegram users.
 // Users and sessions must share the same persistent storage implementation.
 type ConnectController struct {
 	UserStore           models.UserStore
 	ConnectSessionStore models.ConnectSessionStore
 	PublicBaseURL       string
+	Transactions        TransactionsController
+}
+
+// TransactionsController renders recent locally synchronized transactions for a Telegram user.
+type TransactionsController struct {
+	UserStore        models.UserStore
+	TransactionStore models.TransactionStore
+	Now              func() time.Time
 }
 
 // New creates a Telegram bot and registers the supported application commands.
@@ -39,6 +50,9 @@ func New(botToken, webhookSecret string, controller ConnectController) (*telegra
 
 	// Match the standard /connect command and delegate its workflow to the controller.
 	telegramBot.RegisterHandler(telegrambot.HandlerTypeMessageText, "connect", telegrambot.MatchTypeCommand, controller.connect)
+	for command, duration := range transactionPeriods {
+		telegramBot.RegisterHandler(telegrambot.HandlerTypeMessageText, command, telegrambot.MatchTypeCommand, transactionsHandler(controller.Transactions, duration))
+	}
 	return telegramBot, nil
 }
 
@@ -46,11 +60,86 @@ func New(botToken, webhookSecret string, controller ConnectController) (*telegra
 // It requires a live bot and a context that remains valid for the API request.
 func RegisterCommands(ctx context.Context, telegramBot *telegrambot.Bot) error {
 	// Publish the command so Telegram clients can surface it in the command menu.
-	_, err := telegramBot.SetMyCommands(ctx, &telegrambot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}}})
+	_, err := telegramBot.SetMyCommands(ctx, &telegrambot.SetMyCommandsParams{Commands: []telegram.BotCommand{{Command: "connect", Description: "Connect a bank account"}, {Command: "transactions_24h", Description: "Transactions from 24 hours"}, {Command: "transactions_3d", Description: "Transactions from 3 days"}, {Command: "transactions_7d", Description: "Transactions from 7 days"}, {Command: "transactions_30d", Description: "Transactions from 30 days"}}})
 	if err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)
 	}
 	return nil
+}
+
+func transactionsHandler(controller TransactionsController, duration time.Duration) telegrambot.HandlerFunc {
+	return func(ctx context.Context, telegramBot *telegrambot.Bot, update *telegram.Update) {
+		if update.Message == nil {
+			return
+		}
+		user, err := controller.UserStore.GetOrCreateUser(ctx, update.Message.Chat.ID)
+		if err != nil {
+			slog.Log(ctx, slog.LevelError, "get transaction user", "error", err)
+			return
+		}
+		transactions, err := controller.TransactionStore.ListTransactions(ctx, user.ID, controller.Now().Add(-duration))
+		if err != nil {
+			slog.Log(ctx, slog.LevelError, "list transactions", "error", err)
+			return
+		}
+		verbose := len(strings.Fields(update.Message.Text)) > 1 && strings.EqualFold(strings.Fields(update.Message.Text)[1], "verbose")
+		for _, text := range formatTransactionMessages(transactions, verbose) {
+			if _, err := telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: text}); err != nil {
+				slog.Log(ctx, slog.LevelError, "send transactions", "error", err)
+				return
+			}
+		}
+	}
+}
+
+func formatTransactionMessages(transactions []models.Transaction, verbose bool) []string {
+	if len(transactions) == 0 {
+		return []string{"No transactions in this period."}
+	}
+	lines := make([]string, 0, len(transactions))
+	for _, transaction := range transactions {
+		if verbose {
+			lines = append(lines, strings.Join([]string{"ID: " + transaction.ID, "Account ID: " + transaction.AccountID, "Date: " + transaction.Date, "Amount: " + transaction.Amount, "Description: " + transaction.Description, "Status: " + transaction.Status, "Type: " + transaction.Type, "Running balance: " + optionalValue(transaction.RunningBalance), "Processing status: " + transaction.ProcessingStatus, "Category: " + optionalValue(transaction.Category), "Counterparty name: " + optionalValue(transaction.CounterpartyName), "Counterparty type: " + optionalValue(transaction.CounterpartyType), "Transaction link: " + transaction.SelfLink, "Account link: " + transaction.AccountLink}, "\n"))
+		} else {
+			lines = append(lines, transaction.Date+" · "+transaction.Amount+" · "+transaction.Description)
+		}
+	}
+	return splitTelegramMessages(lines)
+}
+
+func optionalValue(value *string) string {
+	if value == nil {
+		return "not available"
+	}
+	return *value
+}
+
+func splitTelegramMessages(lines []string) []string {
+	const maximumLength = 4096
+	var messages []string
+	var current strings.Builder
+	for _, line := range lines {
+		if current.Len() > 0 && current.Len()+1+len(line) > maximumLength {
+			messages = append(messages, current.String())
+			current.Reset()
+		}
+		for len(line) > maximumLength {
+			if current.Len() > 0 {
+				messages = append(messages, current.String())
+				current.Reset()
+			}
+			messages = append(messages, line[:maximumLength])
+			line = line[maximumLength:]
+		}
+		if current.Len() > 0 {
+			current.WriteByte('\n')
+		}
+		current.WriteString(line)
+	}
+	if current.Len() > 0 {
+		messages = append(messages, current.String())
+	}
+	return messages
 }
 
 // RegisterWebhook tells Telegram to deliver updates through the public Nginx gateway.

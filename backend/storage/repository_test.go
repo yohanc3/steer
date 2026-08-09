@@ -46,6 +46,30 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	}
 }
 
+func TestListTransactionsFiltersUserAndDate(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := Repository{Database: db}
+	user, err := repository.GetOrCreateUser(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transactions := []models.Transaction{{ID: "old", AccountID: "acc", Amount: "-1.00", Date: "2026-08-01", Description: "old"}, {ID: "recent", AccountID: "acc", Amount: "-2.00", Date: "2026-08-08", Description: "recent"}}
+	if err := repository.UpsertTransactions(context.Background(), user.ID, transactions, false); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := repository.ListTransactions(context.Background(), user.ID, time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != "recent" {
+		t.Fatalf("transactions = %#v", listed)
+	}
+}
+
 func TestSyncStartDateIsScopedToAccount(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
 	if err != nil {

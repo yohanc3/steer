@@ -1,30 +1,21 @@
 # Deployment
 
-Docker Compose runs the backend, frontend, Nginx gateway, SQLite backup, and
-the one-time deployment setup stages. Compose reads `.env` to select either the
-development or production override through `COMPOSE_FILE`.
+The host launcher starts ngrok for development, discovers its public URL, then
+replaces itself with Docker Compose. Compose runs the backend, frontend, and
+Nginx gateway.
 
 ## Development
 
 1. Copy `.env.example` to the ignored `.env` file and fill in every empty
-   value. Set `NGROK_DOMAIN` to the reserved ngrok domain and set
-   `PUBLIC_BASE_URL` to its exact `https://` URL.
+   value. Configure the ngrok CLI locally with its authtoken.
 2. Start the pipeline:
 
    ```sh
-   docker compose up -d --build --wait
+   python3 cmd/deploy/deploy.py
    ```
 
-3. Watch the one-time setup stage until it reports success:
-
-   ```sh
-   docker compose logs -f predeployment_register_webhook
-   ```
-
-The pipeline validates configuration, starts the backend and frontend, makes
-the internal gateway healthy, starts ngrok against that gateway, verifies the
-public `/healthz` route, then registers
-`https://<NGROK_DOMAIN>/telegram/webhook` with Telegram.
+The launcher discovers ngrok's assigned HTTPS URL before Compose starts. The
+backend uses that URL for Telegram webhook registration and Teller links.
 
 The local gateway is also available at `http://localhost:8080`. Stop the stack
 with `docker compose down`; this retains the named SQLite volume. Database
@@ -34,31 +25,27 @@ backups are written once daily to the ignored `./backups` directory.
 
 1. Copy `.env.prod.example` to the ignored `.env` file and replace the example
    domain, public IP, email, and all empty application values.
-2. Point `APP_DOMAIN` DNS at `DEPLOYMENT_PUBLIC_IP` and ensure ports 80 and 443
+2. Point the hostname in `PUBLIC_BASE_URL` at `DEPLOYMENT_PUBLIC_IP` and ensure ports 80 and 443
    reach the host.
 3. Run:
 
    ```sh
-   docker compose up -d --build --wait
-   docker compose logs -f predeployment_register_webhook
+   python3 cmd/deploy/deploy.py
    ```
 
-Production first verifies DNS, creates temporary local TLS material, starts
-Nginx for the ACME challenge, obtains a Let's Encrypt certificate, and then
-registers the HTTPS Telegram webhook. Certbot checks renewal every 12 hours;
-Nginx reloads every 12 hours to pick up a renewed certificate.
+Production first verifies DNS, creates temporary local TLS material, and
+obtains a Let's Encrypt certificate. Nginx reloads immediately after issuance
+and checks certificate renewal every 60 days.
 
 Use a different Telegram bot token from development before bringing up a
 production stack: Telegram permits only one active webhook per bot.
 
 ## Diagnosing a failed stage
 
-Each one-time service prints its stage name, observed failure, and remediation
-without echoing credentials. Inspect the relevant stage with:
+The launcher prints safe validation errors. Inspect running services with:
 
 ```sh
-docker compose logs predeployment_validate
-docker compose logs predeployment_verify_domain
 docker compose logs predeployment_issue_certificate
-docker compose logs predeployment_register_webhook
+docker compose logs backend
+docker compose logs nginx
 ```

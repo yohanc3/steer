@@ -1,6 +1,6 @@
 FROM nginx:1.27-alpine
 
-RUN apk add --no-cache certbot
+RUN apk add --no-cache certbot inotify-tools
 
 COPY deployment/nginx/reload-on-renewal.sh /usr/local/bin/reload-on-renewal
 

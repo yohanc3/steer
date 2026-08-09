@@ -10,6 +10,10 @@ backend/steer-dev.sqlite*
 .DS_Store
 .header*
 
+# Python bytecode
+__pycache__/
+*.py[cod]
+
 # Local Codex tooling
 .agents/
 .codex-plugins/

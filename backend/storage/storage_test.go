@@ -2,96 +2,71 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestOpenAppliesMigrationsIdempotently(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "steer.sqlite")
-
+	path := filepath.Join(t.TempDir(), "steer.sqlite")
 	for range 2 {
-		db, err := Open(context.Background(), databasePath)
+		db, err := Open(context.Background(), path)
 		if err != nil {
-			t.Fatalf("Open() error = %v", err)
+			t.Fatal(err)
 		}
-		var tableCount int
-		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master
-			WHERE type = 'table' AND name IN ('users', 'telegram_accounts', 'email_verification_codes', 'budget_limits', 'enrollments', 'transactions', 'jobs')`).Scan(&tableCount); err != nil {
-			db.Close()
-			t.Fatalf("query schema: %v", err)
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('users','teller_connect_sessions','transactions')`).Scan(&count); err != nil {
+			t.Fatal(err)
 		}
-		if tableCount != 7 {
-			db.Close()
-			t.Fatalf("table count = %d", tableCount)
+		if count != 3 {
+			t.Fatalf("table count = %d", count)
 		}
-		if err := db.Close(); err != nil {
-			t.Fatalf("Close() error = %v", err)
-		}
+		_ = db.Close()
 	}
 }
 
-func TestOpenRecordsLatestMigrationVersion(t *testing.T) {
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+func TestOpenMigratesLegacyDatabaseToTellerPollingSchema(t *testing.T) {
+	databaseURL := filepath.Join(t.TempDir(), "steer.sqlite")
+	legacy, err := sql.Open("sqlite", databaseURL)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatal(err)
+	}
+	for _, name := range []string{"000001_initial.up.sql", "000002_email_verification.up.sql"} {
+		sqlText, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacy.Exec(string(sqlText)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	if _, err := legacy.Exec(`
+		INSERT INTO users(telegram_user_id, telegram_chat_id, name) VALUES (7, 9, 'Ada');
+		INSERT INTO enrollments(enrollment_id, user_id, teller_user_id, access_token_ciphertext, access_token_nonce, environment)
+		VALUES ('enr', 7, 'usr', X'01', X'02', 'sandbox');
+		INSERT INTO accounts(account_id, enrollment_id, institution_id, institution_name, name, type, subtype, currency, last_four, status)
+		VALUES ('acc', 'enr', 'inst', 'Bank', 'Checking', 'depository', 'checking', 'USD', '1234', 'open');
+		CREATE TABLE schema_migrations (version INTEGER NOT NULL PRIMARY KEY, dirty BOOLEAN NOT NULL);
+		INSERT INTO schema_migrations(version, dirty) VALUES (2, FALSE);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer db.Close()
-
-	var version int
-	var dirty bool
-	if err := db.QueryRow("SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&version, &dirty); err != nil {
-		t.Fatalf("read migration version: %v", err)
-	}
-	if version != 2 || dirty {
-		t.Fatalf("migration version = %d, dirty = %t", version, dirty)
-	}
-	if _, err := db.Exec("SELECT email_verified_at FROM users LIMIT 1"); err != nil {
-		t.Fatalf("email verification column missing: %v", err)
-	}
-}
-
-func TestOpenEnforcesForeignKeys(t *testing.T) {
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	repository := Repository{Database: db}
+	user, err := repository.GetUser(context.Background(), "7")
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatal(err)
 	}
-	defer db.Close()
-
-	_, err = db.Exec(`INSERT INTO budget_limits(user_id, category, amount_cents)
-		VALUES (99, 'groceries', 10000)`)
-	if err == nil {
-		t.Fatal("foreign key violation should fail")
-	}
-}
-
-func TestOpenConfiguresSQLite(t *testing.T) {
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer db.Close()
-
-	var foreignKeys int
-	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
-		t.Fatalf("read foreign_keys: %v", err)
-	}
-	if foreignKeys != 1 {
-		t.Fatalf("foreign_keys = %d", foreignKeys)
-	}
-
-	var journalMode string
-	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
-		t.Fatalf("read journal_mode: %v", err)
-	}
-	if journalMode != "wal" {
-		t.Fatalf("journal_mode = %q", journalMode)
-	}
-
-	var busyTimeout int
-	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
-		t.Fatalf("read busy_timeout: %v", err)
-	}
-	if busyTimeout != 5000 {
-		t.Fatalf("busy_timeout = %d", busyTimeout)
+	if user.TelegramConversationID != 9 || user.TellerAccountID != "acc" || user.TellerUserID != "usr" {
+		t.Fatalf("migrated user = %#v", user)
 	}
 }

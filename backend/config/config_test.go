@@ -1,64 +1,27 @@
 package config
 
-import "testing"
-
-func setRequiredEnvironment(t *testing.T) {
-	t.Helper()
-	values := map[string]string{
-		"DATABASE_URL":                    "steer.sqlite",
-		"PUBLIC_BASE_URL":                 "https://steer.example/",
-		"TELEGRAM_BOT_TOKEN":              "telegram-token",
-		"TELEGRAM_WEBHOOK_SECRET":         "telegram-secret",
-		"TELLER_APPLICATION_ID":           "app_test",
-		"TELLER_ENVIRONMENT":              "sandbox",
-		"TELLER_CERT_PEM":                 "/run/secrets/teller-cert.pem",
-		"TELLER_KEY_PEM":                  "/run/secrets/teller-key.pem",
-		"TELLER_TOKEN_SIGNING_PUBLIC_KEY": "public-key",
-		"TELLER_WEBHOOK_SECRETS":          "old-secret,new-secret",
-		"TOKEN_ENCRYPTION_KEY":            "encryption-key",
-		"DEEPSEEK_API_KEY":                "deepseek-token",
-	}
-	for name, value := range values {
-		t.Setenv(name, value)
-	}
-}
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadConfig(t *testing.T) {
-	setRequiredEnvironment(t)
-	t.Setenv("DEEPSEEK_BASE_URL", "https://deepseek.example/")
-	t.Setenv("DEEPSEEK_MODEL", "custom-model")
-
+	t.Setenv("DATABASE_URL", "test.sqlite")
+	t.Setenv("PUBLIC_BASE_URL", "https://example.test")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+	t.Setenv("TELLER_APPLICATION_ID", "app")
+	t.Setenv("TELLER_ENVIRONMENT", "sandbox")
+	t.Setenv("TELLER_CERT_PEM", "cert")
+	t.Setenv("TELLER_KEY_PEM", "key")
+	t.Setenv("TELLER_TOKEN_SIGNING_PUBLIC_KEY", "public")
+	t.Setenv("TOKEN_ENCRYPTION_KEY", "01234567890123456789012345678901")
+	t.Setenv("TELLER_POLL_INTERVAL", "15m")
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
+		t.Fatal(err)
 	}
-	if cfg.PublicBaseURL != "https://steer.example/" {
-		t.Fatalf("PublicBaseURL = %q", cfg.PublicBaseURL)
-	}
-	if len(cfg.TellerWebhookSecrets) != 2 {
-		t.Fatalf("TellerWebhookSecrets count = %d", len(cfg.TellerWebhookSecrets))
-	}
-	if cfg.DeepSeekBaseURL != "https://deepseek.example/" {
-		t.Fatalf("DeepSeekBaseURL = %q", cfg.DeepSeekBaseURL)
-	}
-	if cfg.DeepSeekModel != "custom-model" {
-		t.Fatalf("DeepSeekModel = %q", cfg.DeepSeekModel)
-	}
-}
-
-func TestLoadConfigUsesDefaults(t *testing.T) {
-	setRequiredEnvironment(t)
-	t.Setenv("DEEPSEEK_BASE_URL", "")
-	t.Setenv("DEEPSEEK_MODEL", "")
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if cfg.DeepSeekBaseURL != "https://api.deepseek.com" {
-		t.Fatalf("DeepSeekBaseURL = %q", cfg.DeepSeekBaseURL)
-	}
-	if cfg.DeepSeekModel != "deepseek-v4-pro" {
-		t.Fatalf("DeepSeekModel = %q", cfg.DeepSeekModel)
+	if cfg.TellerPollInterval != 15*time.Minute {
+		t.Fatalf("interval = %s", cfg.TellerPollInterval)
 	}
 }

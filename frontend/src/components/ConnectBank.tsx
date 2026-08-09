@@ -1,46 +1,23 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from "react";
+import { useTellerConnect, type TellerConnectOnSuccess, type TellerConnectOptions } from "teller-connect-react";
 
-import {
-  useTellerConnect,
-  type TellerConnectOnSuccess,
-  type TellerConnectOnEvent,
-  type TellerConnectOnExit,
-  type TellerConnectOptions,
-} from 'teller-connect-react';
-
-const ConnectBank = () => {
-  const applicationId = import.meta.env.TRELLO_APP_ID;
-  const onSuccess = useCallback<TellerConnectOnSuccess>((authorization) => {
-    // send public_token to your server
-    // https://teller.io/docs/api/tokens/#token-exchange-flow
-    console.log(authorization);
-  }, []);
-  const onEvent = useCallback<TellerConnectOnEvent>((name, data) => {
-    console.log(name, data);
-  }, []);
-    asd
-  const onExit = useCallback<TellerConnectOnExit>(() => {
-    console.log("TellerConnect was dismissed by user");
-  }, []);
-
-  const config: TellerConnectOptions = {
-    applicationId,
-    onSuccess,
-    onEvent,
-    onExit,
-  };
-
-  const {
-    open,
-    ready,
-  } = useTellerConnect(config);
-
-
-  return (
-    <button onClick={() => open()} disabled={!ready}>
-      Connect a bank account
-    </button>
-  );
-};
-
-export default ConnectBank;
+export default function ConnectBank({ sessionToken, nonce }: { sessionToken: string; nonce: string }) {
+  const [message, setMessage] = useState("");
+  const onSuccess = useCallback<TellerConnectOnSuccess>(async (enrollment) => {
+    const response = await fetch(`${import.meta.env.VITE_SERVER_BASE_URL ?? ""}/api/teller/connect/complete`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_token: sessionToken,
+        access_token: enrollment.accessToken,
+        enrollment: enrollment.enrollment,
+        user: enrollment.user,
+        signatures: enrollment.signatures ?? [],
+      }),
+    });
+    setMessage(response.ok ? "Bank connected. You can return to Telegram." : "Unable to connect this account.");
+  }, [sessionToken]);
+  const environment = import.meta.env.VITE_TELLER_ENVIRONMENT as TellerConnectOptions["environment"];
+  const config: TellerConnectOptions = { applicationId: import.meta.env.VITE_TELLER_APPLICATION_ID, environment, products: ["transactions"], selectAccount: "single", nonce, onSuccess };
+  const { open, ready } = useTellerConnect(config);
+  return <section><button onClick={() => open()} disabled={!ready || !!message}>Connect bank</button>{message && <p>{message}</p>}</section>;
+}

@@ -95,7 +95,7 @@ CREATE TABLE webhook_events (
     enrollment_id TEXT,
     teller_timestamp TEXT NOT NULL,
     status TEXT NOT NULL,
-    received_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    received_at INTEGER NOT NULL,
     processed_at INTEGER
 );
 

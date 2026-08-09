@@ -1,6 +1,5 @@
 import { useUserStore } from "../store/useStore";
 import ConnectToTelegramBtn from "./ConnectToTelegramBtn";
-import ConnectBank from "./ConnectBank.tsx";
 import LogoutButton from "./LogoutButton";
 
 export default function Dashboard() {
@@ -19,8 +18,6 @@ export default function Dashboard() {
             <p>user name: {user.email} </p>
             <p>user connected to telegram: {user.isConnectedToTelegram} </p>
             <ConnectToTelegramBtn />
-
-            <ConnectBank />
         </div>
     );
 }

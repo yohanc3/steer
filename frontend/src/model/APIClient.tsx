@@ -14,11 +14,6 @@ export function useAPIFetch() {
       throw new Error("error when getting access token silently: " + e) 
     }
 
-    console.log(
-      "Sending req to: ",
-      `${serverURL}/api/${endpoint} with access token: ${accessToken}`
-    );
-
     const response = await fetch(`${serverURL}/api/${endpoint}`, {
       headers: {
         "Content-Type": "application/json",

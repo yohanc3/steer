@@ -215,6 +215,27 @@ func (repository Repository) UpsertTransactions(ctx context.Context, userID mode
 	return upsertTransactions(ctx, repository.Database, userID, transactions, baseline)
 }
 
+// ListTransactions returns a user's locally stored transactions from the requested date onward.
+func (repository Repository) ListTransactions(ctx context.Context, userID models.UserID, since time.Time) ([]models.Transaction, error) {
+	rows, err := repository.Database.QueryContext(ctx, `SELECT transaction_id, account_id, amount, transaction_date, description, status, transaction_type, running_balance, processing_status, category, counterparty_name, counterparty_type, self_link, account_link FROM transactions WHERE user_id=? AND transaction_date>=? ORDER BY transaction_date DESC`, userID, since.Format("2006-01-02"))
+	if err != nil {
+		return nil, fmt.Errorf("list transactions: %w", err)
+	}
+	defer rows.Close()
+	var transactions []models.Transaction
+	for rows.Next() {
+		var transaction models.Transaction
+		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.Status, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink); err != nil {
+			return nil, fmt.Errorf("scan transaction: %w", err)
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate transactions: %w", err)
+	}
+	return transactions, nil
+}
+
 type sqlExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }

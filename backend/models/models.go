@@ -92,4 +92,5 @@ type ConnectSessionStore interface {
 type TransactionStore interface {
 	UpsertTransactions(ctx context.Context, userID UserID, transactions []Transaction, baseline bool) error
 	SyncStartDate(ctx context.Context, userID UserID, accountID string) (string, error)
+	ListTransactions(ctx context.Context, userID UserID, since time.Time) ([]Transaction, error)
 }

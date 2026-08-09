@@ -94,6 +94,7 @@ func run(parent context.Context) error {
 			UserStore:           repository,
 			ConnectSessionStore: repository,
 			PublicBaseURL:       appConfig.PublicBaseURL,
+			Transactions:        applicationbot.TransactionsController{UserStore: repository, TransactionStore: repository, Now: time.Now},
 		},
 	)
 	if err != nil {

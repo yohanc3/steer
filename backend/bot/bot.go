@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"log/slog"
 	"strings"
 	"time"
@@ -36,7 +37,10 @@ type ConnectController struct {
 type TransactionsController struct {
 	UserStore        models.UserStore
 	TransactionStore models.TransactionStore
-	Now              func() time.Time
+	BalanceProvider  interface {
+		AvailableBalance(context.Context, models.UserID) (string, error)
+	}
+	Now func() time.Time
 }
 
 // New creates a Telegram bot and registers the supported application commands.
@@ -83,8 +87,21 @@ func transactionsHandler(controller TransactionsController, duration time.Durati
 			return
 		}
 		verbose := len(strings.Fields(update.Message.Text)) > 1 && strings.EqualFold(strings.Fields(update.Message.Text)[1], "verbose")
-		for _, text := range formatTransactionMessages(transactions, verbose) {
-			if _, err := telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: text}); err != nil {
+		var balance *string
+		if !verbose && transactions[0].RunningBalance == nil {
+			available, balanceErr := controller.BalanceProvider.AvailableBalance(ctx, user.ID)
+			if balanceErr == nil {
+				balance = &available
+			} else {
+				slog.Log(ctx, slog.LevelWarn, "get available balance", "error", balanceErr)
+			}
+		}
+		for _, text := range formatTransactionMessages(transactions, verbose, balance) {
+			params := &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: text}
+			if !verbose {
+				params.ParseMode = telegram.ParseModeHTML
+			}
+			if _, err := telegramBot.SendMessage(ctx, params); err != nil {
 				slog.Log(ctx, slog.LevelError, "send transactions", "error", err)
 				return
 			}
@@ -92,7 +109,7 @@ func transactionsHandler(controller TransactionsController, duration time.Durati
 	}
 }
 
-func formatTransactionMessages(transactions []models.Transaction, verbose bool) []string {
+func formatTransactionMessages(transactions []models.Transaction, verbose bool, availableBalance *string) []string {
 	if len(transactions) == 0 {
 		return []string{"No transactions in this period."}
 	}
@@ -101,10 +118,54 @@ func formatTransactionMessages(transactions []models.Transaction, verbose bool) 
 		if verbose {
 			lines = append(lines, strings.Join([]string{"ID: " + transaction.ID, "Account ID: " + transaction.AccountID, "Date: " + transaction.Date, "Amount: " + transaction.Amount, "Description: " + transaction.Description, "Status: " + transaction.Status, "Type: " + transaction.Type, "Running balance: " + optionalValue(transaction.RunningBalance), "Processing status: " + transaction.ProcessingStatus, "Category: " + optionalValue(transaction.Category), "Counterparty name: " + optionalValue(transaction.CounterpartyName), "Counterparty type: " + optionalValue(transaction.CounterpartyType), "Transaction link: " + transaction.SelfLink, "Account link: " + transaction.AccountLink}, "\n"))
 		} else {
-			lines = append(lines, transaction.Date+" · "+transaction.Amount+" · "+transaction.Description)
+			lines = append(lines, "<b>"+html.EscapeString(formatAmount(transaction.Amount))+"</b>  "+html.EscapeString(transaction.Description)+"\n<i>"+html.EscapeString(formatDate(transaction.Date))+" · "+html.EscapeString(transaction.Status)+"</i>")
+		}
+	}
+	if !verbose {
+		balance := transactions[0].RunningBalance
+		if balance == nil {
+			balance = availableBalance
+		}
+		if balance != nil {
+			lines = append(lines, "<b>Available balance</b>\n"+html.EscapeString(formatBalance(*balance)))
 		}
 	}
 	return splitTelegramMessages(lines)
+}
+
+func formatAmount(amount string) string {
+	if strings.HasPrefix(amount, "-") {
+		return "-$" + strings.TrimPrefix(amount, "-")
+	}
+	if strings.HasPrefix(amount, "+") {
+		return "+$" + strings.TrimPrefix(amount, "+")
+	}
+	return "+$" + amount
+}
+
+func formatBalance(balance string) string { return "$" + balance }
+
+func formatDate(value string) string {
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return value
+	}
+	return date.Format("Mon, Jan ") + ordinal(date.Day()) + date.Format(" 2006")
+}
+
+func ordinal(day int) string {
+	suffix := "th"
+	if day%100 < 11 || day%100 > 13 {
+		switch day % 10 {
+		case 1:
+			suffix = "st"
+		case 2:
+			suffix = "nd"
+		case 3:
+			suffix = "rd"
+		}
+	}
+	return fmt.Sprintf("%d%s", day, suffix)
 }
 
 func optionalValue(value *string) string {

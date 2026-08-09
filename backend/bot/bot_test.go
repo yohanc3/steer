@@ -3,9 +3,12 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	telegrambot "github.com/go-telegram/bot"
+
+	"yohanc3/steer/models"
 )
 
 type webhookRegistrarStub struct {
@@ -36,5 +39,15 @@ func TestRegisterWebhookReportsTelegramFailure(t *testing.T) {
 	stub := &webhookRegistrarStub{err: errors.New("network unavailable")}
 	if err := RegisterWebhook(context.Background(), stub, "https://steer.example", "secret"); err == nil {
 		t.Fatal("expected webhook registration error")
+	}
+}
+
+func TestFormatTransactionMessagesAddsReadableAmountDateAndBalance(t *testing.T) {
+	balance := "125.50"
+	messages := formatTransactionMessages([]models.Transaction{{Amount: "-12.30", Date: "2026-08-06", Description: "Coffee", Status: "posted", RunningBalance: &balance}}, false, nil)
+	for _, expected := range []string{"<b>-$12.30</b>", "Thu, Aug 6th 2026", "<b>Available balance</b>", "$125.50"} {
+		if !strings.Contains(messages[0], expected) {
+			t.Fatalf("message missing %q: %s", expected, messages[0])
+		}
 	}
 }

@@ -11,8 +11,7 @@ deploying user without `sudo`.
 ## Development
 
 1. Copy `.env.example` to the ignored `.env` file and fill in every empty
-   value. This selects `DEPLOYMENT_ENV=dev` and the development Compose
-   override.
+   value. `DEPLOYMENT_ENV=dev` selects the development Compose configuration.
 2. Configure ngrok for the deploying user:
 
    ```sh
@@ -34,8 +33,8 @@ backups are written once daily to the ignored `./backups` directory.
 
 ## Production
 
-1. Copy `.env.prod.example` to the ignored `.env` file. This selects
-   `DEPLOYMENT_ENV=prod` and the production Compose override.
+1. Copy `.env.prod.example` to the ignored `.env` file.
+   `DEPLOYMENT_ENV=prod` selects the production Compose configuration.
 2. Replace the example domain, public IP, email, and all empty application
    values. `DEPLOYMENT_PUBLIC_IP` can be found with:
 

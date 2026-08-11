@@ -17,6 +17,10 @@ from urllib.request import urlopen
 
 ROOT_DIRECTORY = Path(__file__).resolve().parents[2]
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
+COMPOSE_FILES = {
+    "dev": ("compose.yaml", "compose.dev.yaml"),
+    "prod": ("compose.yaml", "compose.prod.yaml"),
+}
 
 
 REQUIRED_APPLICATION_VALUES = (
@@ -118,7 +122,11 @@ def main() -> int:
         print(f"deployment failed unexpectedly: {type(error).__name__}", file=sys.stderr)
         return 1
 
-    os.execvpe("docker", ["docker", "compose", "up", "--build"], compose_environment)
+    compose_command = ["docker", "compose"]
+    for compose_file in COMPOSE_FILES[environment]:
+        compose_command.extend(["-f", compose_file])
+    compose_command.extend(["up", "--build", "-d"])
+    os.execvpe("docker", compose_command, compose_environment)
     return 0
 
 

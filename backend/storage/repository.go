@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+	"yohanc3/steer/budget"
 	"yohanc3/steer/models"
 
 	"github.com/google/uuid"
@@ -234,6 +236,215 @@ func (repository Repository) ListTransactions(ctx context.Context, userID models
 		return nil, fmt.Errorf("iterate transactions: %w", err)
 	}
 	return transactions, nil
+}
+
+// GetPrototypeBudget loads a browser-scoped prototype budget when one exists.
+func (repository Repository) GetPrototypeBudget(ctx context.Context, clientID string) (*budget.Budget, error) {
+	var storedCategories string
+	prototypeBudget := budget.Budget{}
+	var updatedAt int64
+	err := repository.Database.QueryRowContext(ctx, `SELECT monthly_total_cents, categories_json, version, updated_at FROM prototype_budgets WHERE client_id = ?`, clientID).Scan(&prototypeBudget.MonthlyTotalCents, &storedCategories, &prototypeBudget.Version, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, budget.ErrNoBudget
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query prototype budget: %w", err)
+	}
+	if err := json.Unmarshal([]byte(storedCategories), &prototypeBudget.Categories); err != nil {
+		return nil, fmt.Errorf("decode prototype categories: %w", err)
+	}
+	prototypeBudget.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	return &prototypeBudget, nil
+}
+
+// SavePrototypeBudget replaces the flexible category allocation for one browser session.
+func (repository Repository) SavePrototypeBudget(ctx context.Context, clientID string, value budget.Budget) error {
+	categories, err := json.Marshal(value.Categories)
+	if err != nil {
+		return fmt.Errorf("encode prototype categories: %w", err)
+	}
+	_, err = repository.Database.ExecContext(ctx, `INSERT INTO prototype_budgets(client_id, monthly_total_cents, categories_json, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(client_id) DO UPDATE SET monthly_total_cents=excluded.monthly_total_cents, categories_json=excluded.categories_json, version=excluded.version, updated_at=excluded.updated_at`, clientID, value.MonthlyTotalCents, categories, value.Version, value.UpdatedAt.Unix(), value.UpdatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("write prototype budget: %w", err)
+	}
+	return nil
+}
+
+// DeletePrototypeBudget removes the budget and its cached mappings but retains activity history.
+func (repository Repository) DeletePrototypeBudget(ctx context.Context, clientID string) error {
+	tx, err := repository.Database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete prototype budget: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM prototype_budget_mappings WHERE client_id = ?`, clientID); err != nil {
+		return fmt.Errorf("delete prototype mappings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE prototype_budget_transactions SET budget_version = 0, budget_category = NULL, classification_status = 'unmatched' WHERE client_id = ?`, clientID); err != nil {
+		return fmt.Errorf("clear prototype classifications: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM prototype_budgets WHERE client_id = ?`, clientID); err != nil {
+		return fmt.Errorf("delete prototype budget: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete prototype budget: %w", err)
+	}
+	return nil
+}
+
+// DeletePrototype clears all data created by one browser-scoped prototype session.
+func (repository Repository) DeletePrototype(ctx context.Context, clientID string) error {
+	tx, err := repository.Database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reset prototype: %w", err)
+	}
+	defer tx.Rollback()
+	for _, query := range []string{
+		`DELETE FROM prototype_budget_mappings WHERE client_id = ?`,
+		`DELETE FROM prototype_budget_transactions WHERE client_id = ?`,
+		`DELETE FROM prototype_budgets WHERE client_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, clientID); err != nil {
+			return fmt.Errorf("reset prototype: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit reset prototype: %w", err)
+	}
+	return nil
+}
+
+// ListPrototypeTransactions returns recent prototype activity with its classification state.
+func (repository Repository) ListPrototypeTransactions(ctx context.Context, clientID string) ([]budget.Transaction, error) {
+	rows, err := repository.Database.QueryContext(ctx, `SELECT id, merchant, provider_category, amount_cents, occurred_at, budget_version, budget_category, classification_status, classification_source FROM prototype_budget_transactions WHERE client_id = ? ORDER BY created_at DESC`, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("query prototype transactions: %w", err)
+	}
+	defer rows.Close()
+	transactions := []budget.Transaction{}
+	for rows.Next() {
+		var transaction budget.Transaction
+		var occurredAt int64
+		if err := rows.Scan(&transaction.ID, &transaction.Merchant, &transaction.ProviderCategory, &transaction.AmountCents, &occurredAt, &transaction.BudgetVersion, &transaction.BudgetCategory, &transaction.ClassificationStatus, &transaction.ClassificationSource); err != nil {
+			return nil, fmt.Errorf("scan prototype transaction: %w", err)
+		}
+		transaction.OccurredAt = time.Unix(occurredAt, 0).UTC()
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prototype transactions: %w", err)
+	}
+	return transactions, nil
+}
+
+// GetPrototypeMapping retrieves a cache entry scoped to one budget version.
+func (repository Repository) GetPrototypeMapping(ctx context.Context, clientID string, budgetVersion int64, signature string) (string, error) {
+	var category string
+	err := repository.Database.QueryRowContext(ctx, `SELECT budget_category FROM prototype_budget_mappings WHERE client_id = ? AND budget_version = ? AND source_signature = ?`, clientID, budgetVersion, signature).Scan(&category)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", budget.ErrNoMapping
+	}
+	if err != nil {
+		return "", fmt.Errorf("query prototype mapping: %w", err)
+	}
+	return category, nil
+}
+
+// SavePrototypeMapping records a reusable category decision for the current budget version.
+func (repository Repository) SavePrototypeMapping(ctx context.Context, clientID string, budgetVersion int64, signature, category string) error {
+	_, err := repository.Database.ExecContext(ctx, `INSERT INTO prototype_budget_mappings(client_id, budget_version, source_signature, budget_category) VALUES (?, ?, ?, ?) ON CONFLICT(client_id, budget_version, source_signature) DO UPDATE SET budget_category=excluded.budget_category`, clientID, budgetVersion, signature, category)
+	if err != nil {
+		return fmt.Errorf("write prototype mapping: %w", err)
+	}
+	return nil
+}
+
+// CreatePrototypeTransaction stores the activity regardless of whether it was classified.
+func (repository Repository) CreatePrototypeTransaction(ctx context.Context, clientID string, transaction budget.Transaction) error {
+	_, err := repository.Database.ExecContext(ctx, `INSERT INTO prototype_budget_transactions(id, client_id, merchant, provider_category, amount_cents, occurred_at, budget_version, budget_category, classification_status, classification_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, transaction.ID, clientID, transaction.Merchant, transaction.ProviderCategory, transaction.AmountCents, transaction.OccurredAt.Unix(), transaction.BudgetVersion, transaction.BudgetCategory, transaction.ClassificationStatus, transaction.ClassificationSource)
+	if err != nil {
+		return fmt.Errorf("write prototype transaction: %w", err)
+	}
+	return nil
+}
+
+// ResolvePrototypeTransaction records a user-approved category for an unmatched activity.
+func (repository Repository) ResolvePrototypeTransaction(ctx context.Context, clientID, transactionID, category string) error {
+	result, err := repository.Database.ExecContext(ctx, `UPDATE prototype_budget_transactions SET budget_category = ?, classification_status = 'matched', classification_source = 'user' WHERE id = ? AND client_id = ? AND classification_status = 'unmatched'`, category, transactionID, clientID)
+	if err != nil {
+		return fmt.Errorf("update prototype transaction: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("prototype transaction rows: %w", err)
+	}
+	if changed != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetTelegramBudget loads the real budget associated with one Telegram user.
+func (repository Repository) GetTelegramBudget(ctx context.Context, userID models.UserID) (*budget.Budget, error) {
+	var categories string
+	value := budget.Budget{}
+	var updatedAt int64
+	err := repository.Database.QueryRowContext(ctx, `SELECT monthly_total_cents, categories_json, version, updated_at FROM telegram_budgets WHERE user_id = ?`, userID).Scan(&value.MonthlyTotalCents, &categories, &value.Version, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, budget.ErrNoBudget
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query Telegram budget: %w", err)
+	}
+	if err := json.Unmarshal([]byte(categories), &value.Categories); err != nil {
+		return nil, fmt.Errorf("decode Telegram categories: %w", err)
+	}
+	value.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	return &value, nil
+}
+
+// SaveTelegramBudget atomically replaces a user's complete validated budget.
+func (repository Repository) SaveTelegramBudget(ctx context.Context, userID models.UserID, value budget.Budget) error {
+	categories, err := json.Marshal(value.Categories)
+	if err != nil {
+		return fmt.Errorf("encode Telegram categories: %w", err)
+	}
+	_, err = repository.Database.ExecContext(ctx, `INSERT INTO telegram_budgets(user_id, monthly_total_cents, categories_json, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET monthly_total_cents=excluded.monthly_total_cents, categories_json=excluded.categories_json, version=excluded.version, updated_at=excluded.updated_at`, userID, value.MonthlyTotalCents, categories, value.Version, value.UpdatedAt.Unix(), value.UpdatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("save Telegram budget: %w", err)
+	}
+	return nil
+}
+
+// SaveTelegramBudgetAction persists an action receipt or returns the prior receipt for a webhook retry.
+func (repository Repository) SaveTelegramBudgetAction(ctx context.Context, receipt budget.TelegramActionReceipt) (budget.TelegramActionReceipt, error) {
+	_, err := repository.Database.ExecContext(ctx, `INSERT INTO telegram_budget_actions(id, user_id, telegram_message_id, action_index, action_type, payload_json, status, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, telegram_message_id, action_index) DO NOTHING`, receipt.ID, receipt.UserID, receipt.TelegramMessageID, receipt.ActionIndex, receipt.ActionType, receipt.Payload, receipt.Status, receipt.Result)
+	if err != nil {
+		return budget.TelegramActionReceipt{}, fmt.Errorf("save Telegram action: %w", err)
+	}
+	return receipt, nil
+}
+
+// ListTelegramBudgetActions returns prior receipts for idempotent Telegram webhook deliveries.
+func (repository Repository) ListTelegramBudgetActions(ctx context.Context, userID models.UserID, messageID int64) ([]budget.TelegramActionReceipt, error) {
+	rows, err := repository.Database.QueryContext(ctx, `SELECT id, telegram_message_id, action_index, action_type, payload_json, status, result_json FROM telegram_budget_actions WHERE user_id = ? AND telegram_message_id = ? ORDER BY action_index`, userID, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("list Telegram actions: %w", err)
+	}
+	defer rows.Close()
+	var receipts []budget.TelegramActionReceipt
+	for rows.Next() {
+		var receipt budget.TelegramActionReceipt
+		if err := rows.Scan(&receipt.ID, &receipt.TelegramMessageID, &receipt.ActionIndex, &receipt.ActionType, &receipt.Payload, &receipt.Status, &receipt.Result); err != nil {
+			return nil, fmt.Errorf("scan Telegram action: %w", err)
+		}
+		receipt.UserID = userID
+		receipts = append(receipts, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Telegram actions: %w", err)
+	}
+	return receipts, nil
 }
 
 type sqlExecutor interface {

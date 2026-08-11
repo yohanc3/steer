@@ -13,6 +13,7 @@ import (
 	"time"
 
 	applicationbot "yohanc3/steer/bot"
+	"yohanc3/steer/budget"
 	"yohanc3/steer/config"
 	"yohanc3/steer/models"
 	"yohanc3/steer/storage"
@@ -24,7 +25,7 @@ import (
 
 // newAPIServer registers HTTP routes for Telegram and Teller Connect.
 // It requires the Telegram webhook handler and a fully configured Teller service.
-func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerService) http.Handler {
+func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerService, budgetController budget.Controller) http.Handler {
 	controller := tellerConnectController{tellerService: tellerService}
 	mux := http.NewServeMux()
 
@@ -33,6 +34,7 @@ func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerServi
 
 	// Route browser completion callbacks through the Teller controller.
 	mux.HandleFunc("POST /api/teller/connect/complete", controller.complete)
+	budgetController.Register(mux)
 
 	// Expose a lightweight backend health endpoint for local orchestration.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -61,6 +63,13 @@ func run(parent context.Context) error {
 	defer database.Close()
 	// Reuse one repository implementation for the service's related stores.
 	repository := storage.Repository{Database: database}
+	budgetService := budget.Service{
+		Store:        repository,
+		AI:           budget.NewDeepSeekClient(appConfig.DeepSeekAPIKey, appConfig.DeepSeekModel),
+		AIModel:      appConfig.DeepSeekModel,
+		AIConfigured: appConfig.DeepSeekAPIKey != "",
+		Now:          time.Now,
+	}
 
 	// Build the crypto and remote API dependencies needed for Teller operations.
 	accessTokenCipher, err := teller.NewAESGCM([]byte(appConfig.TokenEncryptionKey))
@@ -95,6 +104,7 @@ func run(parent context.Context) error {
 			ConnectSessionStore: repository,
 			PublicBaseURL:       appConfig.PublicBaseURL,
 			Transactions:        applicationbot.TransactionsController{UserStore: repository, TransactionStore: repository, BalanceProvider: tellerService, Now: time.Now},
+			BudgetAgent:         applicationbot.BudgetAgentController{UserStore: repository, Agent: budget.TelegramAgent{Store: repository, Planner: budget.NewDeepSeekClient(appConfig.DeepSeekAPIKey, appConfig.DeepSeekModel), Now: time.Now}},
 		},
 	)
 	if err != nil {
@@ -113,7 +123,7 @@ func run(parent context.Context) error {
 	go backupDatabase(ctx, database, appConfig.DatabaseBackupDirectory, appConfig.DatabaseBackupInterval)
 
 	// Serve public HTTP routes until the listener fails or shutdown is requested.
-	server := &http.Server{Addr: ":8080", Handler: newAPIServer(telegramBot.WebhookHandler(), tellerService), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: ":8080", Handler: newAPIServer(telegramBot.WebhookHandler(), tellerService, budget.Controller{Service: budgetService}), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
 	go registerTelegramWebhook(ctx, telegramBot, appConfig.PublicBaseURL, appConfig.TelegramWebhookSecret)

@@ -1,0 +1,2 @@
+ALTER TABLE prototype_budget_transactions
+DROP COLUMN classification_source;

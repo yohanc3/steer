@@ -22,6 +22,8 @@ type Config struct {
 	TokenEncryptionKey          string        `env:"TOKEN_ENCRYPTION_KEY,required"`
 	TellerPollInterval          time.Duration `env:"TELLER_POLL_INTERVAL" envDefault:"30m"`
 	DatabaseBackupInterval      time.Duration `env:"DATABASE_BACKUP_INTERVAL" envDefault:"24h"`
+	DeepSeekAPIKey              string        `env:"DEEPSEEK_API_KEY"`
+	DeepSeekModel               string        `env:"DEEPSEEK_MODEL" envDefault:"deepseek-v4-flash"`
 }
 
 // LoadConfig parses Config from process environment variables.

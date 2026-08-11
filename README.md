@@ -103,3 +103,9 @@ Run the relevant checks before opening a pull request:
 cd backend && go test ./... && go vet ./...
 cd ../frontend && npm run build
 ```
+
+## Budget prototype
+
+Set `DEEPSEEK_API_KEY` in `.env`, deploy the application, then open
+`/prototype-budget` on the public or local gateway. The prototype has its own
+browser-scoped SQLite data and does not alter connected Telegram accounts.

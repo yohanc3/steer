@@ -5,11 +5,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"yohanc3/steer/budget"
 	"yohanc3/steer/teller"
 )
 
 func TestHealth(t *testing.T) {
-	handler := newAPIServer(http.NotFoundHandler(), teller.TellerService{})
+	handler := newAPIServer(http.NotFoundHandler(), teller.TellerService{}, budget.Controller{})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusOK {

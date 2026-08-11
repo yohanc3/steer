@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	telegrambot "github.com/go-telegram/bot"
 	telegram "github.com/go-telegram/bot/models"
 
+	"yohanc3/steer/budget"
 	"yohanc3/steer/models"
 	"yohanc3/steer/storage"
 )
@@ -40,6 +42,13 @@ type ConnectController struct {
 	ConnectSessionStore models.ConnectSessionStore
 	PublicBaseURL       string
 	Transactions        TransactionsController
+	BudgetAgent         BudgetAgentController
+}
+
+// BudgetAgentController handles real Telegram budget requests through the action executor.
+type BudgetAgentController struct {
+	UserStore models.UserStore
+	Agent     budget.TelegramAgent
 }
 
 // TransactionsController renders recent locally synchronized transactions for a Telegram user.
@@ -74,6 +83,7 @@ func New(botToken, webhookSecret string, controller ConnectController) (*telegra
 			transactionsHandler(controller.Transactions, duration),
 		)
 	}
+	telegramBot.RegisterHandler(telegrambot.HandlerTypeMessageText, "budget", telegrambot.MatchTypeCommand, controller.BudgetAgent.handle)
 	return telegramBot, nil
 }
 
@@ -87,12 +97,61 @@ func RegisterCommands(ctx context.Context, telegramBot *telegrambot.Bot) error {
 		{Command: "transactions_3d", Description: "Transactions from 3 days"},
 		{Command: "transactions_7d", Description: "Transactions from 7 days"},
 		{Command: "transactions_30d", Description: "Transactions from 30 days"},
+		{Command: "budget", Description: "Create or update your budget"},
 	}
 	_, err := telegramBot.SetMyCommands(ctx, &telegrambot.SetMyCommandsParams{Commands: commands})
 	if err != nil {
 		return fmt.Errorf("set telegram commands: %w", err)
 	}
 	return nil
+}
+
+func (controller BudgetAgentController) handle(ctx context.Context, telegramBot *telegrambot.Bot, update *telegram.Update) {
+	if update.Message == nil {
+		return
+	}
+	user, err := controller.UserStore.GetOrCreateUser(ctx, update.Message.Chat.ID)
+	if err != nil {
+		slog.Log(ctx, slog.LevelError, "get budget user", "error", err)
+		return
+	}
+	request := strings.TrimSpace(strings.TrimPrefix(update.Message.Text, "/budget"))
+	if request == "" {
+		current, currentErr := controller.Agent.CurrentBudget(ctx, user.ID)
+		text := "Use /budget followed by a request, for example:\n/budget Move 200 from Other to Car fixes"
+		if currentErr == nil {
+			text = formatBudget(current) + "\n\n" + text
+		}
+		_, _ = telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: text})
+		return
+	}
+	receipts, err := controller.Agent.Handle(ctx, user.ID, int64(update.Message.ID), request)
+	if err != nil {
+		slog.Log(ctx, slog.LevelError, "handle budget request", "user_id", user.ID, "error", err)
+		_, _ = telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: "I couldn't process that budget request: " + err.Error()})
+		return
+	}
+	var lines []string
+	for _, receipt := range receipts {
+		var result budget.ActionResult
+		_ = json.Unmarshal(receipt.Result, &result)
+		lines = append(lines, fmt.Sprintf("%d. %s — %s", receipt.ActionIndex+1, receipt.Status, result.Summary))
+	}
+	if current, currentErr := controller.Agent.CurrentBudget(ctx, user.ID); currentErr == nil {
+		lines = append(lines, "", formatBudget(current))
+	}
+	_, err = telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: update.Message.Chat.ID, Text: strings.Join(lines, "\n")})
+	if err != nil {
+		slog.Log(ctx, slog.LevelError, "send budget receipt", "error", err)
+	}
+}
+
+func formatBudget(current *budget.Budget) string {
+	lines := []string{fmt.Sprintf("Current monthly budget: $%.2f", float64(current.MonthlyTotalCents)/100)}
+	for _, category := range current.Categories {
+		lines = append(lines, fmt.Sprintf("• %s: $%.2f", category.Name, float64(category.MonthlyLimitCents)/100))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func transactionsHandler(

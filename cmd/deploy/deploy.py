@@ -107,8 +107,11 @@ def main() -> int:
     try:
         validate_environment(values)
         if environment == "dev":
+            ngrok_command = ["ngrok", "http", "8080"]
+            if domain := values.get("NGROK_DOMAIN", ""):
+                ngrok_command = ["ngrok", "http", f"--url={domain}", "8080"]
             ngrok_process = subprocess.Popen(
-                ["ngrok", "http", "8080"],
+                ngrok_command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

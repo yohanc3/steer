@@ -108,6 +108,16 @@ func transactionsHandler(
 			slog.Log(ctx, slog.LevelError, "get transaction user", "error", err)
 			return
 		}
+		if !hasTellerConnection(user) {
+			_, err := telegramBot.SendMessage(ctx, &telegrambot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Connect an account first with /connect.",
+			})
+			if err != nil {
+				slog.Log(ctx, slog.LevelError, "send connect prompt", "error", err)
+			}
+			return
+		}
 		transactions, err := controller.TransactionStore.ListTransactions(
 			ctx,
 			user.ID,
@@ -137,6 +147,11 @@ func transactionsHandler(
 			}
 		}
 	}
+}
+
+// hasTellerConnection reports whether a user has the persisted data required for Teller requests.
+func hasTellerConnection(user models.User) bool {
+	return user.TellerAccountID != "" && len(user.AccessTokenCiphertext) > 0 && len(user.AccessTokenNonce) > 0
 }
 
 func formatTransactionMessages(

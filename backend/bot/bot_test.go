@@ -63,3 +63,15 @@ func TestFormatTransactionMessagesUsesLiveBalanceForEmptyHistory(t *testing.T) {
 		t.Fatalf("messages = %#v", messages)
 	}
 }
+
+func TestHasTellerConnection(t *testing.T) {
+	if hasTellerConnection(models.User{}) {
+		t.Fatal("empty user reported as connected")
+	}
+	if hasTellerConnection(models.User{TellerAccountID: "acc_1", AccessTokenCiphertext: []byte("ciphertext")}) {
+		t.Fatal("user without a nonce reported as connected")
+	}
+	if !hasTellerConnection(models.User{TellerAccountID: "acc_1", AccessTokenCiphertext: []byte("ciphertext"), AccessTokenNonce: []byte("nonce")}) {
+		t.Fatal("complete Teller credentials reported as disconnected")
+	}
+}

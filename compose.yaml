@@ -11,6 +11,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: /data/steer.sqlite

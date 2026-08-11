@@ -395,6 +395,12 @@ func (cipher *AESGCM) Decrypt(ciphertext, nonce []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("decrypt teller token: invalid nonce length %d", len(nonce))
+	}
+	if len(ciphertext) < gcm.Overhead() {
+		return nil, fmt.Errorf("decrypt teller token: ciphertext is too short")
+	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt teller token: %w", err)

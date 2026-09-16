@@ -1,10 +1,19 @@
-# SQLite db
+# SQLite databases
 *.sqlite
 *.db
 
-# Any .env file
+# Environment files
 *.env
 
-.DS_Store
+# Certificates
+**/*.pem
+
+# macOS system files
+**/.DS_Store
+
+# Local SQLite shell files
 .header*
 
+# Node build artifacts
+node_modules
+dist

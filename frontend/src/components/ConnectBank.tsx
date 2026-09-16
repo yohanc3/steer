@@ -9,7 +9,7 @@ import {
 } from 'teller-connect-react';
 
 const ConnectBank = () => {
-  const applicationId = import.meta.env.TRELLO_APP_ID;
+  const applicationId = import.meta.env.VITE_TELLER_APP_ID;
   const onSuccess = useCallback<TellerConnectOnSuccess>((authorization) => {
     // send public_token to your server
     // https://teller.io/docs/api/tokens/#token-exchange-flow
@@ -18,7 +18,7 @@ const ConnectBank = () => {
   const onEvent = useCallback<TellerConnectOnEvent>((name, data) => {
     console.log(name, data);
   }, []);
-    asd
+
   const onExit = useCallback<TellerConnectOnExit>(() => {
     console.log("TellerConnect was dismissed by user");
   }, []);

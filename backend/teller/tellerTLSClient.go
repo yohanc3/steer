@@ -11,7 +11,7 @@ type TellerMTLSClient struct {
 	Client *http.Client
 }
 
-// Creates an mTLS client for Teller.io  
+// Creates an mTLS client for Teller.io
 func (client *TellerMTLSClient) NewTellerMTLS() (*http.Client, error) {
 
 	// Loads certificates
@@ -21,7 +21,7 @@ func (client *TellerMTLSClient) NewTellerMTLS() (*http.Client, error) {
 		return nil, fmt.Errorf("Error when loading X509 Key Pair for Teller TLS: %w", err)
 
 	}
-	
+
 	// Generate bot the tls and the transport config before creating the client
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},

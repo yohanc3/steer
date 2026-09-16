@@ -40,28 +40,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// All dependencies are given & used here when generating a Handler
-func NewServer(logger *applog.Logger, db *sql.DB, ctx context.Context, telegramService *telegrambot.TelegramService) (http.Handler, error) {
-
-	var mux *http.ServeMux = http.NewServeMux()
-	AddRoutes(mux, logger, db, telegramService)
-
-	var handler http.Handler = mux
-	handler, err := AddAccessTokenMiddleware(handler)
-	if err != nil {
-		return nil, err
-	}
-
-	handler = AddCorsMiddleware(handler)
-
-	_, err = telegrambot.SetupBot(mux, ctx, logger, telegramService)
-	if err != nil {
-		return nil, err
-	}
-
-	return handler, nil
-}
-
 func run(ctx context.Context) error {
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
@@ -89,7 +67,16 @@ func run(ctx context.Context) error {
 
 	telegramService := &telegrambot.TelegramService{Logger: logger, DB: db}
 
-	server, err := NewServer(logger, db, ctx, telegramService)
+	server, err := NewServer(ServerDependencies{
+		Logger:          logger,
+		DB:              db,
+		TelegramService: telegramService,
+		AuthMiddleware:  AddAccessTokenMiddleware,
+		RegisterPublicRoutes: func(mux *http.ServeMux) error {
+			_, err := telegrambot.SetupBot(mux, ctx, logger, telegramService)
+			return err
+		},
+	})
 	if err != nil {
 		panic(fmt.Errorf("Error when setting up server: %s", err))
 	}

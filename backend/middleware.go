@@ -26,7 +26,7 @@ func AddCorsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Adds surrounding jwt check to every non-telegram request to the backend.
+// Adds a JWT check to the supplied handler.
 // See https://auth0.com/docs/quickstart/backend/golang/interactive
 func AddAccessTokenMiddleware(next http.Handler) (http.Handler, error) {
 
@@ -40,18 +40,6 @@ func AddAccessTokenMiddleware(next http.Handler) (http.Handler, error) {
 		return nil, err
 	}
 
- 	jwtHandler := middleware.CheckJWT(next)
+	return middleware.CheckJWT(next), nil
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
-		
-		// Skip JWT validation for incoming requests to /bot.
-		// telego has its own validation for incoming webhook requests
-		if r.URL.Path == "/bot" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		jwtHandler.ServeHTTP(w, r)
-	}), nil
-		
 }

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	applog "yohanc3/steer/logger"
@@ -26,38 +28,42 @@ type appError struct {
 
 type appHandler func(w http.ResponseWriter, r *http.Request) *appError
 
+type TelegramConnectionService interface {
+	GetConnectionCode(ctx context.Context, userID string) (*telegram.Code, error)
+}
+
 func (err *appError) Error() string { return err.Err.Error() }
 
-// Wraps a route handler to log any returned error 
+// Wraps a route handler to log any returned error
 func wrapHandler(logger *applog.Logger, handler appHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		// using a custom error allows us to handle any error returned
 		if appErr := handler(w, r); appErr != nil {
 			http.Error(w, appErr.Message, appErr.Code)
-			logger.Debug(appErr.Err.Error(), appErr.MessageArgs)
+			logger.Debug(appErr.Err.Error(), "message_args", appErr.MessageArgs)
 		}
 	})
 }
 
 // Adds all routes to a given multiplexer
-func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB, telegramService *telegram.TelegramService) {
+func AddRoutes(mux *http.ServeMux, logger *applog.Logger, db *sql.DB, telegramService TelegramConnectionService) {
 
 	mux.Handle("POST /api/user", wrapHandler(logger, CreateUser(logger, db)))
-	mux.Handle("GET /api/user/{user_id}/telegram/connection-code", wrapHandler(logger, GetTelegramConnectionCode(logger, db, telegramService)))
+	mux.Handle("GET /api/user/{user_id}/telegram/connection-code", wrapHandler(logger, GetTelegramConnectionCode(logger, telegramService)))
 }
 
 // Frontend requests code to send to the Bot, which is linked in the backend to
 // their user, so when the Bot receives it, it sends it along with the conversation
 // id, which gets linked to the user so we know it's them.
-func GetTelegramConnectionCode(logger *applog.Logger, db *sql.DB, telegramService *telegram.TelegramService) appHandler {
+func GetTelegramConnectionCode(logger *applog.Logger, telegramService TelegramConnectionService) appHandler {
 	return func(w http.ResponseWriter, r *http.Request) *appError {
 
 		user_id := r.PathValue("user_id")
 
 		if user_id == "" {
-			error := "Error when getting 'user_id' from path value."
-			return &appError{fmt.Errorf(error), "Bad Request.", []string{}, http.StatusBadRequest}
+			err := errors.New("error when getting user_id from path value")
+			return &appError{err, "Bad Request.", []string{}, http.StatusBadRequest}
 		}
 
 		otp, err := telegramService.GetConnectionCode(r.Context(), user_id)

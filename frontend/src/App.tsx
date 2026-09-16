@@ -7,7 +7,7 @@ import { useUserStore } from "./store/useStore";
 import type { BaseUser } from "./types/types";
 
 export default function App() {
-    const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+    const { user, isAuthenticated } = useAuth0();
     const { useOnUserLogin } = useUser();
     const { onUserLogin } = useOnUserLogin;
     const { setUser } = useUserStore();
@@ -37,7 +37,7 @@ export default function App() {
         }
 
         initializeUser();
-    }, [user, onUserLogin, setUser, getAccessTokenSilently, isInitialized, user]);
+    }, [isAuthenticated, isInitialized, onUserLogin, setUser, user]);
 
     if (!isAuthenticated) {
         return <LoginButton />;

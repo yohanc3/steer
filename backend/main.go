@@ -14,22 +14,16 @@ import (
 
 	applicationbot "yohanc3/steer/bot"
 	"yohanc3/steer/config"
-	"yohanc3/steer/models"
 	"yohanc3/steer/storage"
 	"yohanc3/steer/teller"
 
-	telegrambot "github.com/go-telegram/bot"
 	"github.com/joho/godotenv"
 )
 
-// newAPIServer registers HTTP routes for Telegram and Teller Connect.
-// It requires the Telegram webhook handler and a fully configured Teller service.
-func newAPIServer(telegramHandler http.Handler, tellerService teller.TellerService) http.Handler {
+// newAPIServer registers HTTP routes for Teller Connect and health checks.
+func newAPIServer(tellerService teller.TellerService) http.Handler {
 	controller := tellerConnectController{tellerService: tellerService}
 	mux := http.NewServeMux()
-
-	// Route Telegram updates directly to the library-provided webhook handler.
-	mux.Handle("POST /telegram/webhook", telegramHandler)
 
 	// Route browser completion callbacks through the Teller controller.
 	mux.HandleFunc("POST /api/teller/connect/complete", controller.complete)
@@ -84,12 +78,12 @@ func run(parent context.Context) error {
 		AccessTokenCipher:   accessTokenCipher,
 		EnrollmentVerifier:  enrollmentVerifier,
 		TellerEnvironment:   appConfig.TellerEnvironment,
+		SyncLookbackDays:    appConfig.TellerSyncLookbackDays,
 	}
 
-	// Configure Telegram commands before accepting webhook traffic.
+	// Configure Telegram commands before starting long polling.
 	telegramBot, err := applicationbot.New(
 		appConfig.TelegramBotToken,
-		appConfig.TelegramWebhookSecret,
 		applicationbot.ConnectController{
 			UserStore:           repository,
 			ConnectSessionStore: repository,
@@ -103,20 +97,26 @@ func run(parent context.Context) error {
 	if err := applicationbot.RegisterCommands(parent, telegramBot); err != nil {
 		return err
 	}
+	if err := applicationbot.PrepareLongPolling(parent, telegramBot); err != nil {
+		return err
+	}
+	poller, err := NewTransactionPoller(repository, tellerService, appConfig.TellerPollInterval, appConfig.TellerQueueRefreshInterval)
+	if err != nil {
+		return err
+	}
 	// Cancel background work and begin HTTP shutdown when the process receives a signal.
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Start independent webhook and polling loops before opening the HTTP listener.
-	go telegramBot.StartWebhook(ctx)
-	go poll(ctx, tellerService, repository, appConfig.TellerPollInterval)
+	// Start independent Telegram and transaction polling loops before the HTTP listener.
+	go telegramBot.Start(ctx)
+	go poller.Run(ctx)
 	go backupDatabase(ctx, database, appConfig.DatabaseBackupDirectory, appConfig.DatabaseBackupInterval)
 
 	// Serve public HTTP routes until the listener fails or shutdown is requested.
-	server := &http.Server{Addr: ":8080", Handler: newAPIServer(telegramBot.WebhookHandler(), tellerService), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: ":8080", Handler: newAPIServer(tellerService), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 1)
 	go func() { errs <- server.ListenAndServe() }()
-	go registerTelegramWebhook(ctx, telegramBot, appConfig.PublicBaseURL, appConfig.TelegramWebhookSecret)
 	select {
 	case serverErr := <-errs:
 		if !errors.Is(serverErr, http.ErrServerClosed) {
@@ -128,26 +128,6 @@ func run(parent context.Context) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdown)
-}
-
-// registerTelegramWebhook retries until the public gateway is ready to receive Telegram updates.
-func registerTelegramWebhook(ctx context.Context, telegramBot *telegrambot.Bot, publicBaseURL, secret string) {
-	for {
-		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := applicationbot.RegisterWebhook(attempt, telegramBot, publicBaseURL, secret)
-		cancel()
-		if err == nil {
-			slog.Log(ctx, slog.LevelInfo, "registered Telegram webhook")
-			return
-		}
-		slog.Log(ctx, slog.LevelWarn, "register Telegram webhook", "error", err)
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(5 * time.Second):
-		}
-	}
 }
 
 // backupDatabase creates a daily snapshot while retaining the running application's database.
@@ -169,33 +149,6 @@ func backupDatabase(ctx context.Context, database *sql.DB, directory string, int
 		}
 	}
 
-}
-
-// poll periodically synchronizes each connected Teller account.
-// It stops when ctx is cancelled and requires a configured TellerService and user store.
-func poll(ctx context.Context, tellerService teller.TellerService, userStore models.UserStore, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// List active users before syncing them one at a time.
-			connected, err := userStore.ListConnectedUsers(ctx)
-			if err != nil {
-				continue
-			}
-
-			// Isolate a failed account sync so other connected users still progress.
-			for _, user := range connected {
-				if err := tellerService.SyncUser(ctx, user.ID, false); err != nil {
-					slog.Log(ctx, slog.LevelError, "poll teller account", "user_id", user.ID, "error", err)
-				}
-			}
-		}
-	}
 }
 
 // main starts the application using the process lifetime as its parent context.

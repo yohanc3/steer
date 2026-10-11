@@ -35,6 +35,29 @@ type TellerHTTPClient struct {
 	baseURL    string
 }
 
+type transactionResponse struct {
+	ID             string  `json:"id"`
+	AccountID      string  `json:"account_id"`
+	Amount         string  `json:"amount"`
+	Date           string  `json:"date"`
+	Description    string  `json:"description"`
+	Status         string  `json:"status"`
+	Type           string  `json:"type"`
+	RunningBalance *string `json:"running_balance"`
+	Details        struct {
+		ProcessingStatus string  `json:"processing_status"`
+		Category         *string `json:"category"`
+		Counterparty     struct {
+			Name *string `json:"name"`
+			Type *string `json:"type"`
+		} `json:"counterparty"`
+	} `json:"details"`
+	Links struct {
+		Self    string `json:"self"`
+		Account string `json:"account"`
+	} `json:"links"`
+}
+
 // NewTellerHTTPClient creates the mutual-TLS client used for Teller API calls.
 // The PEM certificate and private key must be issued for the Teller application.
 func NewTellerHTTPClient(certPEM, keyPEM string) (*TellerHTTPClient, error) {
@@ -82,41 +105,57 @@ func (tellerClient *TellerHTTPClient) ListAccounts(ctx context.Context, accessTo
 // ListTransactions fetches an account's transactions within an inclusive date window.
 // Token, account ID, and dates must be valid Teller API request values.
 func (tellerClient *TellerHTTPClient) ListTransactions(ctx context.Context, accessToken, accountID, startDate, endDate string) ([]models.Transaction, error) {
-	// Escape all account and date inputs before constructing Teller's query URL.
-	path := "/accounts/" + url.PathEscape(accountID) + "/transactions?start_date=" + url.QueryEscape(startDate) + "&end_date=" + url.QueryEscape(endDate)
+	const pageSize = 100
+	transactions := make([]models.Transaction, 0, pageSize)
+	seen := make(map[string]struct{})
+	fromID := ""
 
-	// Decode nested Teller details and links before flattening them into the model.
-	var response []struct {
-		ID             string  `json:"id"`
-		AccountID      string  `json:"account_id"`
-		Amount         string  `json:"amount"`
-		Date           string  `json:"date"`
-		Description    string  `json:"description"`
-		Status         string  `json:"status"`
-		Type           string  `json:"type"`
-		RunningBalance *string `json:"running_balance"`
-		Details        struct {
-			ProcessingStatus string  `json:"processing_status"`
-			Category         *string `json:"category"`
-			Counterparty     struct {
-				Name *string `json:"name"`
-				Type *string `json:"type"`
-			} `json:"counterparty"`
-		} `json:"details"`
-		Links struct {
-			Self    string `json:"self"`
-			Account string `json:"account"`
-		} `json:"links"`
+	for {
+		query := url.Values{
+			"start_date": {startDate},
+			"end_date":   {endDate},
+			"count":      {fmt.Sprintf("%d", pageSize)},
+		}
+		if fromID != "" {
+			query.Set("from_id", fromID)
+		}
+		path := "/accounts/" + url.PathEscape(accountID) + "/transactions?" + query.Encode()
+
+		var response []transactionResponse
+		if err := tellerClient.get(ctx, accessToken, path, &response); err != nil {
+			return nil, err
+		}
+		for _, transaction := range response {
+			if _, exists := seen[transaction.ID]; exists {
+				continue
+			}
+			seen[transaction.ID] = struct{}{}
+			transactions = append(transactions, models.Transaction{
+				ID:               transaction.ID,
+				AccountID:        transaction.AccountID,
+				Amount:           transaction.Amount,
+				Date:             transaction.Date,
+				Description:      transaction.Description,
+				ProviderStatus:   transaction.Status,
+				Type:             transaction.Type,
+				RunningBalance:   transaction.RunningBalance,
+				ProcessingStatus: transaction.Details.ProcessingStatus,
+				Category:         transaction.Details.Category,
+				CounterpartyName: transaction.Details.Counterparty.Name,
+				CounterpartyType: transaction.Details.Counterparty.Type,
+				SelfLink:         transaction.Links.Self,
+				AccountLink:      transaction.Links.Account,
+			})
+		}
+		if len(response) < pageSize {
+			return transactions, nil
+		}
+		nextFromID := response[len(response)-1].ID
+		if nextFromID == "" || nextFromID == fromID {
+			return nil, fmt.Errorf("paginate teller transactions: cursor did not advance")
+		}
+		fromID = nextFromID
 	}
-	if err := tellerClient.get(ctx, accessToken, path, &response); err != nil {
-		return nil, err
-	}
-	// Convert each API transaction while retaining its processing and link metadata.
-	transactions := make([]models.Transaction, len(response))
-	for i, t := range response {
-		transactions[i] = models.Transaction{ID: t.ID, AccountID: t.AccountID, Amount: t.Amount, Date: t.Date, Description: t.Description, Status: t.Status, Type: t.Type, RunningBalance: t.RunningBalance, ProcessingStatus: t.Details.ProcessingStatus, Category: t.Details.Category, CounterpartyName: t.Details.Counterparty.Name, CounterpartyType: t.Details.Counterparty.Type, SelfLink: t.Links.Self, AccountLink: t.Links.Account}
-	}
-	return transactions, nil
 }
 
 // GetBalances fetches Teller's current available and ledger balances for an account.
@@ -175,6 +214,7 @@ type TellerService struct {
 	AccessTokenCipher   AccessTokenCipher
 	EnrollmentVerifier  EnrollmentVerifier
 	TellerEnvironment   string
+	SyncLookbackDays    int
 	Clock               func() time.Time
 }
 
@@ -213,7 +253,7 @@ func (tellerService TellerService) Complete(ctx context.Context, sessionToken, a
 	if err != nil {
 		return fmt.Errorf("list initial teller transactions: %w", err)
 	}
-	return tellerService.ConnectSessionStore.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), TellerAccount: accounts[0], TellerUserID: tellerUserID, EncryptedAccessToken: ciphertext, AccessTokenNonce: nonce, TellerEnvironment: tellerService.TellerEnvironment, BaselineTransactions: transactions, CompletedAt: now})
+	return tellerService.ConnectSessionStore.FinalizeConnectSession(ctx, models.ConnectCompletion{TokenHash: modelsHash(sessionToken), TellerAccount: accounts[0], TellerUserID: tellerUserID, EncryptedAccessToken: ciphertext, AccessTokenNonce: nonce, TellerEnvironment: tellerService.TellerEnvironment, BaselineTransactions: postedTransactions(transactions), CompletedAt: now})
 }
 
 // SyncUser fetches and stores new transactions for a connected Teller user.
@@ -229,26 +269,34 @@ func (tellerService TellerService) SyncUser(ctx context.Context, userID models.U
 	if err != nil {
 		return err
 	}
-	// Continue from the account-scoped cursor, falling back to the initial 30-day window.
-	start, err := tellerService.TransactionStore.SyncStartDate(ctx, userID, user.TellerAccountID)
+	// Teller accepts inclusive calendar dates, so every sync overlaps recent history.
+	now := tellerService.now()
+	lookbackDays := tellerService.SyncLookbackDays
+	if lookbackDays <= 0 {
+		lookbackDays = 10
+	}
+	start := now.AddDate(0, 0, -lookbackDays).Format("2006-01-02")
+	transactions, err := tellerService.TellerClient.ListTransactions(ctx, string(token), user.TellerAccountID, start, now.Format("2006-01-02"))
 	if err != nil {
 		return err
 	}
-	if start == "" {
-		start = tellerService.now().AddDate(0, 0, -30).Format("2006-01-02")
-	}
-	// Fetch and upsert the current window before marking an initial baseline complete.
-	transactions, err := tellerService.TellerClient.ListTransactions(ctx, string(token), user.TellerAccountID, start, tellerService.now().Format("2006-01-02"))
-	if err != nil {
-		return err
-	}
-	if err := tellerService.TransactionStore.UpsertTransactions(ctx, userID, transactions, baseline); err != nil {
+	if err := tellerService.TransactionStore.UpsertTransactions(ctx, userID, postedTransactions(transactions), baseline); err != nil {
 		return err
 	}
 	if baseline {
 		return tellerService.UserStore.MarkBaselineComplete(ctx, userID, tellerService.now())
 	}
 	return nil
+}
+
+func postedTransactions(transactions []models.Transaction) []models.Transaction {
+	posted := make([]models.Transaction, 0, len(transactions))
+	for _, transaction := range transactions {
+		if transaction.ProviderStatus == "posted" {
+			posted = append(posted, transaction)
+		}
+	}
+	return posted
 }
 
 // AvailableBalance decrypts a user's token only while fetching their live Teller balance.

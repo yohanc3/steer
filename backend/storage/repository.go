@@ -217,7 +217,7 @@ func (repository Repository) UpsertTransactions(ctx context.Context, userID mode
 
 // ListTransactions returns a user's locally stored transactions from the requested date onward.
 func (repository Repository) ListTransactions(ctx context.Context, userID models.UserID, since time.Time) ([]models.Transaction, error) {
-	rows, err := repository.Database.QueryContext(ctx, `SELECT transaction_id, account_id, amount, transaction_date, description, status, transaction_type, running_balance, processing_status, category, counterparty_name, counterparty_type, self_link, account_link FROM transactions WHERE user_id=? AND transaction_date>=? ORDER BY transaction_date DESC`, userID, since.Format("2006-01-02"))
+	rows, err := repository.Database.QueryContext(ctx, `SELECT transaction_id, account_id, amount, transaction_date, description, provider_status, delivery_status, transaction_type, running_balance, processing_status, category, counterparty_name, counterparty_type, self_link, account_link FROM transactions WHERE user_id=? AND transaction_date>=? ORDER BY transaction_date DESC`, userID, since.Format("2006-01-02"))
 	if err != nil {
 		return nil, fmt.Errorf("list transactions: %w", err)
 	}
@@ -225,7 +225,7 @@ func (repository Repository) ListTransactions(ctx context.Context, userID models
 	var transactions []models.Transaction
 	for rows.Next() {
 		var transaction models.Transaction
-		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.Status, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink); err != nil {
+		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink); err != nil {
 			return nil, fmt.Errorf("scan transaction: %w", err)
 		}
 		transactions = append(transactions, transaction)
@@ -248,7 +248,7 @@ INSERT INTO transactions (
     amount,
     transaction_date,
     description,
-    status,
+    provider_status,
     transaction_type,
     running_balance,
     processing_status,
@@ -265,7 +265,7 @@ ON CONFLICT(transaction_id) DO UPDATE SET
     amount = excluded.amount,
     transaction_date = excluded.transaction_date,
     description = excluded.description,
-    status = excluded.status,
+    provider_status = excluded.provider_status,
     transaction_type = excluded.transaction_type,
     running_balance = excluded.running_balance,
     processing_status = excluded.processing_status,
@@ -283,31 +283,12 @@ ON CONFLICT(transaction_id) DO UPDATE SET
 func upsertTransactions(ctx context.Context, executor sqlExecutor, userID models.UserID, transactions []models.Transaction, baseline bool) error {
 	// Apply each Teller record through the caller's database or transaction executor.
 	for _, transaction := range transactions {
-		_, err := executor.ExecContext(ctx, upsertTransactionSQL, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.Status, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
+		_, err := executor.ExecContext(ctx, upsertTransactionSQL, transaction.ID, userID, transaction.AccountID, transaction.Amount, transaction.Date, transaction.Description, transaction.ProviderStatus, transaction.Type, transaction.RunningBalance, transaction.ProcessingStatus, transaction.Category, transaction.CounterpartyName, transaction.CounterpartyType, transaction.SelfLink, transaction.AccountLink, boolToInt(baseline))
 		if err != nil {
 			return fmt.Errorf("upsert transaction: %w", err)
 		}
 	}
 	return nil
-}
-
-// SyncStartDate returns the earliest pending or latest completed account date.
-// The account ID scopes reconnects so prior accounts cannot advance its cursor.
-func (repository Repository) SyncStartDate(ctx context.Context, userID models.UserID, accountID string) (string, error) {
-	// Pending records take priority so polling keeps revisiting unsettled transactions.
-	var date string
-	err := repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='pending' ORDER BY transaction_date ASC LIMIT 1`, userID, accountID).Scan(&date)
-	// Otherwise continue from the newest completed transaction for this account only.
-	if errors.Is(err, sql.ErrNoRows) {
-		err = repository.Database.QueryRowContext(ctx, `SELECT transaction_date FROM transactions WHERE user_id=? AND account_id=? AND processing_status='complete' ORDER BY transaction_date DESC LIMIT 1`, userID, accountID).Scan(&date)
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("sync start date: %w", err)
-	}
-	return date, nil
 }
 
 // HashToken produces the fixed-size database representation of a browser token.

@@ -9,7 +9,7 @@ import (
 )
 
 func TestHealth(t *testing.T) {
-	handler := newAPIServer(http.NotFoundHandler(), teller.TellerService{})
+	handler := newAPIServer(teller.TellerService{})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Code != http.StatusOK {

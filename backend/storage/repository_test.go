@@ -8,7 +8,7 @@ import (
 	"yohanc3/steer/models"
 )
 
-func TestTransactionUpsertAndCursor(t *testing.T) {
+func TestTransactionUpsertUpdatesProviderData(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -19,16 +19,9 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := models.Transaction{ID: "txn-pending", AccountID: "acc", Amount: "-1.00", Date: "2026-08-01", Description: "old", Status: "pending", Type: "card_payment", ProcessingStatus: "pending", SelfLink: "self", AccountLink: "account"}
+	pending := models.Transaction{ID: "txn-pending", AccountID: "acc", Amount: "-1.00", Date: "2026-08-01", Description: "old", ProviderStatus: "pending", Type: "card_payment", ProcessingStatus: "pending", SelfLink: "self", AccountLink: "account"}
 	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{pending}, true); err != nil {
 		t.Fatal(err)
-	}
-	start, err := repository.SyncStartDate(context.Background(), user.ID, "acc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if start != "2026-08-01" {
-		t.Fatalf("start = %q", start)
 	}
 	complete := pending
 	complete.Description = "new"
@@ -37,12 +30,12 @@ func TestTransactionUpsertAndCursor(t *testing.T) {
 	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{complete}, false); err != nil {
 		t.Fatal(err)
 	}
-	start, err = repository.SyncStartDate(context.Background(), user.ID, "acc")
+	listed, err := repository.ListTransactions(context.Background(), user.ID, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start != "2026-08-03" {
-		t.Fatalf("start = %q", start)
+	if len(listed) != 1 || listed[0].Date != "2026-08-03" || listed[0].Description != "new" {
+		t.Fatalf("transactions = %#v", listed)
 	}
 }
 
@@ -68,29 +61,42 @@ func TestListTransactionsFiltersUserAndDate(t *testing.T) {
 	if len(listed) != 1 || listed[0].ID != "recent" {
 		t.Fatalf("transactions = %#v", listed)
 	}
+	if listed[0].DeliveryStatus != models.DeliveryStatusSettled {
+		t.Fatalf("delivery status = %q", listed[0].DeliveryStatus)
+	}
 }
 
-func TestSyncStartDateIsScopedToAccount(t *testing.T) {
+func TestTransactionUpsertPreservesDeliveredStatus(t *testing.T) {
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	repository := Repository{Database: db}
-	user, err := repository.GetOrCreateUser(context.Background(), 123)
+	user, err := repository.GetOrCreateUser(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	transaction := models.Transaction{ID: "txn-old-account", AccountID: "acc-old", Amount: "-1.00", Date: "2026-08-03", Description: "old", Status: "pending", Type: "card_payment", ProcessingStatus: "pending", SelfLink: "self", AccountLink: "account"}
-	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{transaction}, true); err != nil {
+	transaction := models.Transaction{ID: "txn", AccountID: "acc", Amount: "-1.00", Date: "2026-10-11", Description: "Coffee", ProviderStatus: "posted"}
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{transaction}, false); err != nil {
 		t.Fatal(err)
 	}
-	start, err := repository.SyncStartDate(context.Background(), user.ID, "acc-new")
+	if _, err := db.Exec(`UPDATE transactions SET delivery_status='delivered' WHERE transaction_id='txn'`); err != nil {
+		t.Fatal(err)
+	}
+	transaction.Description = "Updated Coffee"
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{transaction}, false); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := repository.ListTransactions(context.Background(), user.ID, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start != "" {
-		t.Fatalf("start = %q, want empty cursor", start)
+	if len(listed) != 1 || listed[0].DeliveryStatus != models.DeliveryStatusDelivered {
+		t.Fatalf("transactions = %#v", listed)
+	}
+	if _, err := db.Exec(`UPDATE transactions SET delivery_status='unknown' WHERE transaction_id='txn'`); err == nil {
+		t.Fatal("invalid delivery status was accepted")
 	}
 }
 

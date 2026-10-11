@@ -54,6 +54,14 @@ type Account struct {
 	Status   string
 }
 
+// DeliveryStatus tracks whether a posted transaction still needs notification delivery.
+type DeliveryStatus string
+
+const (
+	DeliveryStatusSettled   DeliveryStatus = "settled"
+	DeliveryStatusDelivered DeliveryStatus = "delivered"
+)
+
 // Transaction is Teller transaction data normalized for local persistence.
 type Transaction struct {
 	ID               string
@@ -61,7 +69,8 @@ type Transaction struct {
 	Amount           string
 	Date             string
 	Description      string
-	Status           string
+	ProviderStatus   string
+	DeliveryStatus   DeliveryStatus
 	Type             string
 	RunningBalance   *string
 	ProcessingStatus string
@@ -94,9 +103,8 @@ type ConnectSessionStore interface {
 	FinalizeConnectSession(ctx context.Context, completion ConnectCompletion) error
 }
 
-// TransactionStore persists Teller transactions and computes account sync cursors.
+// TransactionStore persists and reads Teller transactions.
 type TransactionStore interface {
 	UpsertTransactions(ctx context.Context, userID UserID, transactions []Transaction, baseline bool) error
-	SyncStartDate(ctx context.Context, userID UserID, accountID string) (string, error)
 	ListTransactions(ctx context.Context, userID UserID, since time.Time) ([]Transaction, error)
 }

@@ -18,8 +18,8 @@ import (
 	"yohanc3/steer/storage"
 )
 
-type webhookRegistrar interface {
-	SetWebhook(context.Context, *telegrambot.SetWebhookParams) (bool, error)
+type webhookDeleter interface {
+	DeleteWebhook(context.Context, *telegrambot.DeleteWebhookParams) (bool, error)
 }
 
 type balanceProvider interface {
@@ -50,11 +50,10 @@ type TransactionsController struct {
 	Now              func() time.Time
 }
 
-// New creates a Telegram bot and registers the supported application commands.
-// The token and webhook secret must come from Telegram's BotFather configuration.
-func New(botToken, webhookSecret string, controller ConnectController) (*telegrambot.Bot, error) {
-	// Attach Telegram's shared-secret validation before registering commands.
-	telegramBot, err := telegrambot.New(botToken, telegrambot.WithWebhookSecretToken(webhookSecret))
+// New creates a long-polling Telegram bot and registers the supported commands.
+// The token must come from Telegram's BotFather configuration.
+func New(botToken string, controller ConnectController) (*telegrambot.Bot, error) {
+	telegramBot, err := telegrambot.New(botToken)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
 	}
@@ -171,7 +170,7 @@ func formatTransactionMessages(
 				"Date: " + transaction.Date,
 				"Amount: " + transaction.Amount,
 				"Description: " + transaction.Description,
-				"Status: " + transaction.Status,
+				"Status: " + transaction.ProviderStatus,
 				"Type: " + transaction.Type,
 				"Running balance: " + optionalValue(transaction.RunningBalance),
 				"Processing status: " + transaction.ProcessingStatus,
@@ -185,7 +184,7 @@ func formatTransactionMessages(
 			line := "<b>" + html.EscapeString(formatAmount(transaction.Amount)) + "</b>  "
 			line += html.EscapeString(transaction.Description) + "\n<i>"
 			line += html.EscapeString(formatDate(transaction.Date)) + " · "
-			line += html.EscapeString(transaction.Status) + "</i>"
+			line += html.EscapeString(transaction.ProviderStatus) + "</i>"
 			lines = append(lines, line)
 		}
 	}
@@ -272,22 +271,14 @@ func splitTelegramMessages(lines []string) []string {
 	return messages
 }
 
-// RegisterWebhook tells Telegram to deliver updates through the public Nginx gateway.
-func RegisterWebhook(
-	ctx context.Context,
-	telegramBot webhookRegistrar,
-	publicBaseURL, secret string,
-) error {
-	registered, err := telegramBot.SetWebhook(ctx, &telegrambot.SetWebhookParams{
-		URL:            publicBaseURL + "/telegram/webhook",
-		SecretToken:    secret,
-		AllowedUpdates: []string{"message"},
-	})
+// PrepareLongPolling removes any webhook left by an older deployment.
+func PrepareLongPolling(ctx context.Context, telegramBot webhookDeleter) error {
+	deleted, err := telegramBot.DeleteWebhook(ctx, &telegrambot.DeleteWebhookParams{})
 	if err != nil {
-		return fmt.Errorf("set Telegram webhook: %w", err)
+		return fmt.Errorf("delete Telegram webhook: %w", err)
 	}
-	if !registered {
-		return fmt.Errorf("set Telegram webhook: Telegram rejected the request")
+	if !deleted {
+		return fmt.Errorf("delete Telegram webhook: Telegram rejected the request")
 	}
 	return nil
 }

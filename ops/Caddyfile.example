@@ -1,0 +1,22 @@
+# Replace every your-domain.com hostname before installing this file on the VPS.
+# Caddy obtains and renews public TLS certificates after DNS points to the host.
+
+app.your-domain.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8081
+}
+
+api.your-domain.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
+}
+
+staging.your-domain.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8181
+}
+
+api.staging.your-domain.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8180
+}

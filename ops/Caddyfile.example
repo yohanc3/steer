@@ -1,0 +1,25 @@
+# Replace the example hostnames, then install this file on the VPS as Caddyfile.
+
+app.your-domain.com {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8081
+	}
+}
+
+staging.your-domain.com {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8180
+	}
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8180
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8181
+	}
+}

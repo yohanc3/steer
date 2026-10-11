@@ -1,0 +1,48 @@
+name: steer
+
+services:
+  database_initialize:
+    image: alpine:3.21
+    command: ["chown", "-R", "10001:10001", "/data", "/backups"]
+    volumes:
+      - steer-data:/data
+      - steer-backups:/backups
+
+  backend:
+    image: ghcr.io/${IMAGE_NAMESPACE:-yohanc3}/steer-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: /data/steer.sqlite
+      DATABASE_BACKUP_DIRECTORY: /backups
+    ports:
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8080}:8080"
+    volumes:
+      - steer-data:/data
+      - steer-backups:/backups
+    depends_on:
+      database_initialize:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  frontend:
+    image: ghcr.io/${IMAGE_NAMESPACE:-yohanc3}/steer-frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  steer-data:
+  steer-backups:

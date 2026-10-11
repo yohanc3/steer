@@ -1,0 +1,45 @@
+name: steer
+
+services:
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: /data/steer.sqlite
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - steer-data:/data
+      - ./secrets:/run/secrets/steer:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH0_DOMAIN: ${VITE_AUTH0_DOMAIN}
+        VITE_AUTH0_CLIENT_ID: ${VITE_AUTH0_CLIENT_ID}
+        VITE_AUTH0_AUDIENCE: ${VITE_AUTH0_AUDIENCE}
+        VITE_SERVER_BASE_URL: ${VITE_SERVER_BASE_URL}
+        VITE_TELLER_APP_ID: ${VITE_TELLER_APP_ID}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  steer-data:

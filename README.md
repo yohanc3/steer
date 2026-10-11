@@ -33,9 +33,7 @@ Teller transaction/balance APIs, and SQLite storage before returning messages.
 Docker Compose runs the backend, frontend, Nginx gateway, backups, and the
 development ngrok or production TLS deployment layer.
 
-### Architecture diagram
-
-_Incoming architecture diagram._
+See [docs/architecture.md](docs/architecture.md) for the system diagram and component breakdown.
 
 ## How to self-host
 
@@ -84,8 +82,8 @@ certificate.
 ### Good to know
 
 - `.env` is ignored and must never be committed.
-- A Telegram bot supports only one active webhook. Use a separate bot token for
-  dev and prod, or the latest deployment will replace the other webhook.
+- Telegram uses long polling. Use a separate bot token for dev and prod because
+  only one running consumer should poll a bot at a time.
 - `docker compose down` stops services but retains the named SQLite data volume.
 - The backend writes one timestamped SQLite backup every 24 hours to the ignored
   `./backups` directory.

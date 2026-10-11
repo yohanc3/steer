@@ -25,7 +25,7 @@ deploying user without `sudo`.
 
 The launcher starts ngrok, discovers its assigned HTTPS URL from ngrok's local
 API, and supplies it to Compose as `PUBLIC_BASE_URL`. The backend uses that URL
-for Telegram webhook registration and Teller links.
+for Teller Connect links; Telegram updates are received through long polling.
 
 The local gateway is also available at `http://localhost:8080`. Stop the stack
 with `docker compose down`; this retains the named SQLite volume. Database
@@ -55,7 +55,10 @@ Nginx reloads immediately after issuance and checks certificate renewal every
 60 days.
 
 Use a different Telegram bot token from development before bringing up a
-production stack: Telegram permits only one active webhook per bot.
+production stack so two processes do not poll the same bot.
+
+The preferred production path is the guarded GitHub Actions workflow described
+in `ops/README.md`. The launcher remains useful for local and manual deployments.
 
 ## Diagnosing a failed stage
 

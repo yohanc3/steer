@@ -1,7 +1,7 @@
 import { useAuth0 } from "@auth0/auth0-react";
 import * as z from "zod";
 
-const serverURL = import.meta.env.VITE_SERVER_BASE_URL;
+const serverURL = (import.meta.env.VITE_SERVER_BASE_URL ?? "").replace(/\/$/, "");
 
 export function useAPIFetch() {
   const { getAccessTokenSilently } = useAuth0();
@@ -14,11 +14,6 @@ export function useAPIFetch() {
       throw new Error("error when getting access token silently: " + e) 
     }
 
-    console.log(
-      "Sending req to: ",
-      `${serverURL}/api/${endpoint} with access token: ${accessToken}`
-    );
-
     const response = await fetch(`${serverURL}/api/${endpoint}`, {
       headers: {
         "Content-Type": "application/json",
@@ -27,6 +22,10 @@ export function useAPIFetch() {
       },
       ...options,
     });
+
+    if (!response.ok) {
+      throw new Error(`request failed with status ${response.status}`);
+    }
 
     const responseJSON = await response.json();
 

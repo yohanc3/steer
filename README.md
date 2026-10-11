@@ -12,3 +12,5 @@ It watches purchases, sends Telegram push notifications, and explains how each p
 ## Status
 
 This project is still in progress, so the docs stay intentionally brief for now.
+
+Local container setup and the production release process are documented in [ops/README.md](ops/README.md).

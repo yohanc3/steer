@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
+	"time"
 
 	applog "yohanc3/steer/logger"
 )
@@ -17,6 +19,7 @@ type ServerDependencies struct {
 	TelegramService      TelegramConnectionService
 	AuthMiddleware       HTTPMiddleware
 	RegisterPublicRoutes PublicRouteRegistrar
+	AllowedOrigins       []string
 }
 
 // NewServer assembles the HTTP handler from dependencies created by the caller.
@@ -45,6 +48,7 @@ func NewServer(deps ServerDependencies) (http.Handler, error) {
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/api/", protectedHandler)
+	rootMux.HandleFunc("GET /healthz", healthHandler(deps.DB))
 
 	if deps.RegisterPublicRoutes != nil {
 		if err := deps.RegisterPublicRoutes(rootMux); err != nil {
@@ -52,5 +56,21 @@ func NewServer(deps ServerDependencies) (http.Handler, error) {
 		}
 	}
 
-	return AddCorsMiddleware(rootMux), nil
+	return AddCorsMiddleware(rootMux, deps.AllowedOrigins), nil
+}
+
+func healthHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			http.Error(w, "unhealthy", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}
 }

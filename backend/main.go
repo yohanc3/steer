@@ -47,35 +47,42 @@ func run(ctx context.Context) error {
 
 	logger := applog.NewLogger()
 
-	err := godotenv.Load()
+	// Local development may use a .env file. Containers inject variables directly.
+	_ = godotenv.Load()
 
-	if err != nil {
-		panic(".env file not loaded correctly")
-	}
-
-	err = config.LoadConfig()
-	if err != nil {
+	if err := config.LoadConfig(); err != nil {
 		panic(err)
 	}
 
 	fmt.Println("Config properly loaded up.")
 
-	db, err := sql.Open("sqlite3", os.Getenv("DATABASE_URL"))
+	db, err := sql.Open("sqlite3", config.Cfg.DatabaseURL)
 	if err != nil {
 		panic(fmt.Sprintf("Unable to initialize database. Error: %s", err))
+	}
+	defer db.Close()
+
+	if err := InitializeDatabase(ctx, db); err != nil {
+		panic(fmt.Errorf("error initializing database: %w", err))
 	}
 
 	telegramService := &telegrambot.TelegramService{Logger: logger, DB: db}
 
-	server, err := NewServer(ServerDependencies{
-		Logger:          logger,
-		DB:              db,
-		TelegramService: telegramService,
-		AuthMiddleware:  AddAccessTokenMiddleware,
-		RegisterPublicRoutes: func(mux *http.ServeMux) error {
+	var registerPublicRoutes PublicRouteRegistrar
+	if config.Cfg.TelegramEnabled {
+		registerPublicRoutes = func(mux *http.ServeMux) error {
 			_, err := telegrambot.SetupBot(mux, ctx, logger, telegramService)
 			return err
-		},
+		}
+	}
+
+	server, err := NewServer(ServerDependencies{
+		Logger:               logger,
+		DB:                   db,
+		TelegramService:      telegramService,
+		AuthMiddleware:       AddAccessTokenMiddleware,
+		AllowedOrigins:       config.Cfg.AllowedOrigins,
+		RegisterPublicRoutes: registerPublicRoutes,
 	})
 	if err != nil {
 		panic(fmt.Errorf("Error when setting up server: %s", err))

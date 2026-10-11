@@ -9,11 +9,11 @@ CREATE TABLE IF NOT EXISTS user (
 
 CREATE TABLE IF NOT EXISTS otp (
     id INTEGER PRIMARY KEY NOT NULL,
-    user_id INTEGER UNIQUE NOT NULL,
+    user_id TEXT UNIQUE NOT NULL,
     code TEXT NOT NULL,
     expires_at INTEGER NOT NULL, 
     created_at INTEGER DEFAULT (unixepoch()) NOT NULL    
 );
 
-CREATE INDEX IF NOT EXISTS email_idx on user (email);
-CREATE INDEX IF NOT EXISTS email_idx on otp (user_id);
+CREATE INDEX IF NOT EXISTS user_email_idx ON user (email);
+CREATE INDEX IF NOT EXISTS otp_user_id_idx ON otp (user_id);

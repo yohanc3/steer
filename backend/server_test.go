@@ -93,6 +93,14 @@ func TestNewServerInjectsProtectedAndPublicDependencies(t *testing.T) {
 	if botResponse.Header().Get("X-Test-Auth") != "" {
 		t.Fatal("expected public routes to remain outside auth middleware")
 	}
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthResponse := httptest.NewRecorder()
+	server.ServeHTTP(healthResponse, healthRequest)
+
+	if healthResponse.Code != http.StatusOK {
+		t.Fatalf("expected health status 200, got %d", healthResponse.Code)
+	}
 }
 
 func TestNewServerReturnsInjectedDependencyErrors(t *testing.T) {

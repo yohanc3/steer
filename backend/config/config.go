@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // Global config
@@ -13,9 +15,11 @@ type Config struct {
 	Auth0Audience    string
 	DatabaseURL      string
 	TelegramBotToken string
+	TelegramEnabled  bool
 	ServerURL        string
 	TellerCertPem    string
 	TellerKeyPem     string
+	AllowedOrigins   []string
 }
 
 // Loads environment variables and initializes them in the global Config object.
@@ -42,14 +46,29 @@ func LoadConfig() error {
 		return fmt.Errorf("DATABASE_URL environment variable required")
 	}
 
-	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if telegramBotToken == "" {
-		return fmt.Errorf("TELEGRAM_BOT_TOKEN environment variable required")
+	telegramEnabled := true
+	if rawTelegramEnabled := os.Getenv("TELEGRAM_ENABLED"); rawTelegramEnabled != "" {
+		var err error
+		telegramEnabled, err = strconv.ParseBool(rawTelegramEnabled)
+		if err != nil {
+			return fmt.Errorf("TELEGRAM_ENABLED must be true or false: %w", err)
+		}
 	}
 
+	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	serverURL := os.Getenv("SERVER_URL")
-	if serverURL == "" {
-		return fmt.Errorf("SERVER_URL environment variable required")
+	if telegramEnabled {
+		if telegramBotToken == "" {
+			return fmt.Errorf("TELEGRAM_BOT_TOKEN environment variable required when Telegram is enabled")
+		}
+		if serverURL == "" {
+			return fmt.Errorf("SERVER_URL environment variable required when Telegram is enabled")
+		}
+	}
+
+	allowedOrigins := splitCSV(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:5173"}
 	}
 
 	Cfg = &Config{
@@ -57,10 +76,22 @@ func LoadConfig() error {
 		Auth0Audience:    audience,
 		DatabaseURL:      dbUrl,
 		TelegramBotToken: telegramBotToken,
+		TelegramEnabled:  telegramEnabled,
 		ServerURL:        serverURL,
 		TellerCertPem:    os.Getenv("TELLER_CERT_PEM"),
 		TellerKeyPem:     os.Getenv("TELLER_KEY_PEM"),
+		AllowedOrigins:   allowedOrigins,
 	}
 
 	return nil
+}
+
+func splitCSV(value string) []string {
+	var values []string
+	for item := range strings.SplitSeq(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }

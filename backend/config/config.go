@@ -13,6 +13,8 @@ type Config struct {
 	DatabaseBackupDirectory     string        `env:"DATABASE_BACKUP_DIRECTORY" envDefault:"/backups"`
 	PublicBaseURL               string        `env:"PUBLIC_BASE_URL,required"`
 	TelegramBotToken            string        `env:"TELEGRAM_BOT_TOKEN,required"`
+	TelegramDeliveryInterval    time.Duration `env:"TELEGRAM_DELIVERY_INTERVAL" envDefault:"30s"`
+	TelegramDeliveryConcurrency int           `env:"TELEGRAM_DELIVERY_CONCURRENCY" envDefault:"5"`
 	TellerApplicationID         string        `env:"TELLER_APPLICATION_ID,required"`
 	TellerEnvironment           string        `env:"TELLER_ENVIRONMENT,required"`
 	TellerCertPEM               string        `env:"TELLER_CERT_PEM,required"`
@@ -35,6 +37,12 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.TellerPollInterval <= 0 {
 		return nil, fmt.Errorf("TELLER_POLL_INTERVAL must be greater than zero")
+	}
+	if cfg.TelegramDeliveryInterval <= 0 {
+		return nil, fmt.Errorf("TELEGRAM_DELIVERY_INTERVAL must be greater than zero")
+	}
+	if cfg.TelegramDeliveryConcurrency <= 0 {
+		return nil, fmt.Errorf("TELEGRAM_DELIVERY_CONCURRENCY must be greater than zero")
 	}
 	if cfg.TellerQueueRefreshInterval <= 0 {
 		return nil, fmt.Errorf("TELLER_QUEUE_REFRESH_INTERVAL must be greater than zero")

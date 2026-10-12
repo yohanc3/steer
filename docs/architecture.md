@@ -23,7 +23,7 @@ flowchart LR
 - The backend uses Telegram long polling; there is no inbound Telegram webhook.
 - `/connect` creates a short-lived, single-use Teller Connect session.
 - Transaction-history commands read synchronized data from SQLite and request a live balance from Teller.
-- Future notification delivery will move a transaction from `settled` to `delivered`.
+- A delivery worker sends newly settled, non-baseline transactions and then marks each successful notification `delivered`.
 
 ## Web application
 
@@ -37,6 +37,7 @@ flowchart LR
 - `teller`: mutual-TLS Teller client, enrollment verification, token encryption, pagination, and transaction synchronization.
 - `storage`: SQLite repositories, versioned migrations, and backups.
 - `TransactionPoller`: the in-memory scheduling worker.
+- `TransactionDeliveryWorker`: scheduled, bounded-concurrency Telegram notification delivery.
 
 ## Transaction polling
 
@@ -46,7 +47,16 @@ flowchart LR
 4. Each request re-fetches the inclusive `TELLER_SYNC_LOOKBACK_DAYS` window, follows Teller pagination, and upserts by Teller transaction ID.
 5. Only Teller `posted` transactions are persisted by the polling path. Refunds are currently treated like any other posted transaction.
 
-The queue is intentionally process-local and sequential for the expected private beta of at most 100 users. Restarting the process rebuilds it from SQLite.
+The polling queue is intentionally process-local and sequential for the expected private beta of at most 100 users. Restarting the process rebuilds it from SQLite.
+
+## Telegram notification delivery
+
+1. At startup and every `TELEGRAM_DELIVERY_INTERVAL`, the worker queries non-baseline `settled` transactions oldest-first.
+2. Each query returns at most `TELEGRAM_DELIVERY_CONCURRENCY` rows, and the worker sends that batch concurrently before loading the next batch.
+3. A successful Telegram send is conditionally marked `delivered`. A failed send remains `settled`, is skipped for the rest of that cycle, and becomes eligible on the next scheduled cycle.
+4. Baseline transactions remain baseline during overlapping Teller upserts, so historical account data cannot become a new notification.
+
+Delivery is at-least-once: if Telegram accepts a message but the database update fails, a later cycle can send the message again. This is acceptable for the private beta; exactly-once delivery would require a stronger outbox/idempotency design.
 
 ## Transaction state
 
@@ -54,7 +64,7 @@ The queue is intentionally process-local and sequential for the expected private
 - `delivery_status` is constrained to `settled` or `delivered`.
 - A newly inserted posted transaction defaults to `settled`.
 - Re-syncing an existing transaction updates Teller data without resetting an already `delivered` row.
-- Budget recalculation and notification delivery are not part of the polling worker yet.
+- Notification delivery is independent from transaction polling and budget recalculation.
 
 ## Data and security
 

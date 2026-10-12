@@ -11,6 +11,8 @@ Polling configuration:
 - `TELLER_POLL_INTERVAL`: how often the current in-memory user snapshot is synchronized, for example `30m`.
 - `TELLER_QUEUE_REFRESH_INTERVAL`: how often connected user IDs are reloaded from SQLite, for example `5m`.
 - `TELLER_SYNC_LOOKBACK_DAYS`: inclusive Teller date overlap, normally `10`.
+- `TELEGRAM_DELIVERY_INTERVAL`: how often settled transactions are drained for notification, for example `30s`.
+- `TELEGRAM_DELIVERY_CONCURRENCY`: batch size and maximum simultaneous Telegram sends, normally `5`.
 
 ## Production host
 

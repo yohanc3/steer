@@ -81,6 +81,14 @@ type Transaction struct {
 	AccountLink      string
 }
 
+// TransactionDelivery is one locally settled transaction and its Telegram destination.
+// CreatedAt and Transaction.ID form the stable cursor used while draining a delivery cycle.
+type TransactionDelivery struct {
+	Transaction            Transaction
+	TelegramConversationID int64
+	CreatedAt              int64
+}
+
 // AccountBalances is Teller's live balance view for a connected account.
 type AccountBalances struct {
 	Available *string

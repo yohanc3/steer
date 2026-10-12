@@ -236,6 +236,75 @@ func (repository Repository) ListTransactions(ctx context.Context, userID models
 	return transactions, nil
 }
 
+// ListSettledTransactionDeliveries returns the next non-baseline notification batch.
+// The composite cursor lets one cycle advance past failures without retrying them immediately.
+func (repository Repository) ListSettledTransactionDeliveries(ctx context.Context, afterCreatedAt int64, afterTransactionID string, limit int) ([]models.TransactionDelivery, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("delivery limit must be greater than zero")
+	}
+	rows, err := repository.Database.QueryContext(ctx, `
+SELECT
+    t.transaction_id,
+    t.account_id,
+    t.amount,
+    t.transaction_date,
+    t.description,
+    t.provider_status,
+    t.delivery_status,
+    t.transaction_type,
+    t.running_balance,
+    t.processing_status,
+    t.category,
+    t.counterparty_name,
+    t.counterparty_type,
+    t.self_link,
+    t.account_link,
+    u.telegram_conversation_id,
+    t.created_at
+FROM transactions AS t
+JOIN users AS u ON u.id = t.user_id
+WHERE t.baseline = 0
+  AND t.provider_status = 'posted'
+  AND t.delivery_status = 'settled'
+  AND (t.created_at > ? OR (t.created_at = ? AND t.transaction_id > ?))
+ORDER BY t.created_at, t.transaction_id
+LIMIT ?`, afterCreatedAt, afterCreatedAt, afterTransactionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list settled transaction deliveries: %w", err)
+	}
+	defer rows.Close()
+
+	var deliveries []models.TransactionDelivery
+	for rows.Next() {
+		var delivery models.TransactionDelivery
+		transaction := &delivery.Transaction
+		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink, &delivery.TelegramConversationID, &delivery.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan settled transaction delivery: %w", err)
+		}
+		deliveries = append(deliveries, delivery)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate settled transaction deliveries: %w", err)
+	}
+	return deliveries, nil
+}
+
+// MarkTransactionDelivered completes one notification only if it is still settled.
+func (repository Repository) MarkTransactionDelivered(ctx context.Context, transactionID string) error {
+	result, err := repository.Database.ExecContext(ctx, `UPDATE transactions SET delivery_status='delivered', updated_at=unixepoch() WHERE transaction_id=? AND delivery_status='settled'`, transactionID)
+	if err != nil {
+		return fmt.Errorf("mark transaction delivered: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delivered transaction rows: %w", err)
+	}
+	if changed != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 type sqlExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
@@ -274,7 +343,7 @@ ON CONFLICT(transaction_id) DO UPDATE SET
     counterparty_type = excluded.counterparty_type,
     self_link = excluded.self_link,
     account_link = excluded.account_link,
-    baseline = excluded.baseline,
+    baseline = MAX(transactions.baseline, excluded.baseline),
     updated_at = unixepoch()
 `
 

@@ -26,6 +26,21 @@ type balanceProvider interface {
 	AvailableBalance(context.Context, models.UserID) (string, error)
 }
 
+// TransactionNotifier sends one compact transaction notification through Telegram.
+type TransactionNotifier struct {
+	Bot *telegrambot.Bot
+}
+
+// SendTransaction sends a transaction without a live balance lookup.
+func (notifier TransactionNotifier) SendTransaction(ctx context.Context, conversationID int64, transaction models.Transaction) error {
+	for _, text := range formatTransactionMessages([]models.Transaction{transaction}, false, nil) {
+		if _, err := notifier.Bot.SendMessage(ctx, &telegrambot.SendMessageParams{ChatID: conversationID, Text: text, ParseMode: telegram.ParseModeHTML}); err != nil {
+			return fmt.Errorf("send Telegram transaction notification: %w", err)
+		}
+	}
+	return nil
+}
+
 var transactionPeriods = map[string]time.Duration{
 	"transactions_24h": 24 * time.Hour,
 	"transactions_3d":  3 * 24 * time.Hour,

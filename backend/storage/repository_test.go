@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,6 +37,13 @@ func TestTransactionUpsertUpdatesProviderData(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Date != "2026-08-03" || listed[0].Description != "new" {
 		t.Fatalf("transactions = %#v", listed)
+	}
+	var baseline int
+	if err := db.QueryRow(`SELECT baseline FROM transactions WHERE transaction_id='txn-pending'`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
+	if baseline != 1 {
+		t.Fatalf("baseline was reset by overlap upsert: %d", baseline)
 	}
 }
 
@@ -97,6 +105,64 @@ func TestTransactionUpsertPreservesDeliveredStatus(t *testing.T) {
 	}
 	if _, err := db.Exec(`UPDATE transactions SET delivery_status='unknown' WHERE transaction_id='txn'`); err == nil {
 		t.Fatal("invalid delivery status was accepted")
+	}
+}
+
+func TestSettledTransactionDeliveriesAreFilteredBatchedAndMarked(t *testing.T) {
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "steer.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repository := Repository{Database: db}
+	user, err := repository.GetOrCreateUser(context.Background(), 987)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted := func(id string) models.Transaction {
+		return models.Transaction{ID: id, AccountID: "acc", Amount: "-1.00", Date: "2026-10-11", Description: id, ProviderStatus: "posted"}
+	}
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{posted("b"), posted("a"), posted("delivered")}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{posted("baseline")}, true); err != nil {
+		t.Fatal(err)
+	}
+	pending := posted("pending")
+	pending.ProviderStatus = "pending"
+	if err := repository.UpsertTransactions(context.Background(), user.ID, []models.Transaction{pending}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE transactions SET delivery_status='delivered' WHERE transaction_id='delivered'`); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := repository.ListSettledTransactionDeliveries(context.Background(), 0, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Transaction.ID != "a" || first[0].TelegramConversationID != 987 {
+		t.Fatalf("first batch = %#v", first)
+	}
+	second, err := repository.ListSettledTransactionDeliveries(context.Background(), first[0].CreatedAt, first[0].Transaction.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].Transaction.ID != "b" {
+		t.Fatalf("second batch = %#v", second)
+	}
+	if err := repository.MarkTransactionDelivered(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.MarkTransactionDelivered(context.Background(), "a"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delivery mark error = %v", err)
+	}
+	remaining, err := repository.ListSettledTransactionDeliveries(context.Background(), 0, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 || remaining[0].Transaction.ID != "b" {
+		t.Fatalf("remaining deliveries = %#v", remaining)
 	}
 }
 

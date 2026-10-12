@@ -104,6 +104,15 @@ func run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	deliveryWorker, err := NewTransactionDeliveryWorker(
+		repository,
+		applicationbot.TransactionNotifier{Bot: telegramBot},
+		appConfig.TelegramDeliveryInterval,
+		appConfig.TelegramDeliveryConcurrency,
+	)
+	if err != nil {
+		return err
+	}
 	// Cancel background work and begin HTTP shutdown when the process receives a signal.
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -111,6 +120,7 @@ func run(parent context.Context) error {
 	// Start independent Telegram and transaction polling loops before the HTTP listener.
 	go telegramBot.Start(ctx)
 	go poller.Run(ctx)
+	go deliveryWorker.Run(ctx)
 	go backupDatabase(ctx, database, appConfig.DatabaseBackupDirectory, appConfig.DatabaseBackupInterval)
 
 	// Serve public HTTP routes until the listener fails or shutdown is requested.

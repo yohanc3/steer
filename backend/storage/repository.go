@@ -217,7 +217,7 @@ func (repository Repository) UpsertTransactions(ctx context.Context, userID mode
 
 // ListTransactions returns a user's locally stored transactions from the requested date onward.
 func (repository Repository) ListTransactions(ctx context.Context, userID models.UserID, since time.Time) ([]models.Transaction, error) {
-	rows, err := repository.Database.QueryContext(ctx, `SELECT transaction_id, account_id, amount, transaction_date, description, provider_status, delivery_status, transaction_type, running_balance, processing_status, category, counterparty_name, counterparty_type, self_link, account_link FROM transactions WHERE user_id=? AND transaction_date>=? ORDER BY transaction_date DESC`, userID, since.Format("2006-01-02"))
+	rows, err := repository.Database.QueryContext(ctx, `SELECT t.transaction_id, t.account_id, t.amount, t.transaction_date, t.description, t.provider_status, t.delivery_status, t.transaction_type, t.running_balance, t.processing_status, t.category, t.user_category_id, c.name, t.categorization_status, t.categorization_source, t.categorization_confidence, t.categorization_model, t.counterparty_name, t.counterparty_type, t.self_link, t.account_link FROM transactions AS t LEFT JOIN transaction_categories AS c ON c.category_id=t.user_category_id WHERE t.user_id=? AND t.transaction_date>=? ORDER BY t.transaction_date DESC`, userID, since.Format("2006-01-02"))
 	if err != nil {
 		return nil, fmt.Errorf("list transactions: %w", err)
 	}
@@ -225,7 +225,7 @@ func (repository Repository) ListTransactions(ctx context.Context, userID models
 	var transactions []models.Transaction
 	for rows.Next() {
 		var transaction models.Transaction
-		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink); err != nil {
+		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.UserCategoryID, &transaction.UserCategoryName, &transaction.CategorizationStatus, &transaction.CategorizationSource, &transaction.CategorizationConfidence, &transaction.CategorizationModel, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink); err != nil {
 			return nil, fmt.Errorf("scan transaction: %w", err)
 		}
 		transactions = append(transactions, transaction)
@@ -255,6 +255,12 @@ SELECT
     t.running_balance,
     t.processing_status,
     t.category,
+    t.user_category_id,
+    c.name,
+    t.categorization_status,
+    t.categorization_source,
+    t.categorization_confidence,
+    t.categorization_model,
     t.counterparty_name,
     t.counterparty_type,
     t.self_link,
@@ -263,9 +269,11 @@ SELECT
     t.created_at
 FROM transactions AS t
 JOIN users AS u ON u.id = t.user_id
+LEFT JOIN transaction_categories AS c ON c.category_id = t.user_category_id
 WHERE t.baseline = 0
   AND t.provider_status = 'posted'
   AND t.delivery_status = 'settled'
+  AND t.categorization_status <> 'pending'
   AND (t.created_at > ? OR (t.created_at = ? AND t.transaction_id > ?))
 ORDER BY t.created_at, t.transaction_id
 LIMIT ?`, afterCreatedAt, afterCreatedAt, afterTransactionID, limit)
@@ -278,7 +286,7 @@ LIMIT ?`, afterCreatedAt, afterCreatedAt, afterTransactionID, limit)
 	for rows.Next() {
 		var delivery models.TransactionDelivery
 		transaction := &delivery.Transaction
-		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink, &delivery.TelegramConversationID, &delivery.CreatedAt); err != nil {
+		if err := rows.Scan(&transaction.ID, &transaction.AccountID, &transaction.Amount, &transaction.Date, &transaction.Description, &transaction.ProviderStatus, &transaction.DeliveryStatus, &transaction.Type, &transaction.RunningBalance, &transaction.ProcessingStatus, &transaction.Category, &transaction.UserCategoryID, &transaction.UserCategoryName, &transaction.CategorizationStatus, &transaction.CategorizationSource, &transaction.CategorizationConfidence, &transaction.CategorizationModel, &transaction.CounterpartyName, &transaction.CounterpartyType, &transaction.SelfLink, &transaction.AccountLink, &delivery.TelegramConversationID, &delivery.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan settled transaction delivery: %w", err)
 		}
 		deliveries = append(deliveries, delivery)

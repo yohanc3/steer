@@ -136,6 +136,16 @@ func TestSettledTransactionDeliveriesAreFilteredBatchedAndMarked(t *testing.T) {
 	if _, err := db.Exec(`UPDATE transactions SET delivery_status='delivered' WHERE transaction_id='delivered'`); err != nil {
 		t.Fatal(err)
 	}
+	blocked, err := repository.ListSettledTransactionDeliveries(context.Background(), 0, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 0 {
+		t.Fatalf("pending categorizations were deliverable: %#v", blocked)
+	}
+	if _, err := db.Exec(`UPDATE transactions SET categorization_status='uncategorized', categorization_source='no_categories'`); err != nil {
+		t.Fatal(err)
+	}
 
 	first, err := repository.ListSettledTransactionDeliveries(context.Background(), 0, "", 1)
 	if err != nil {

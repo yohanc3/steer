@@ -190,6 +190,7 @@ func formatTransactionMessages(
 				"Running balance: " + optionalValue(transaction.RunningBalance),
 				"Processing status: " + transaction.ProcessingStatus,
 				"Category: " + optionalValue(transaction.Category),
+				"User category: " + userCategoryName(transaction),
 				"Counterparty name: " + optionalValue(transaction.CounterpartyName),
 				"Counterparty type: " + optionalValue(transaction.CounterpartyType),
 				"Transaction link: " + transaction.SelfLink,
@@ -199,7 +200,8 @@ func formatTransactionMessages(
 			line := "<b>" + html.EscapeString(formatAmount(transaction.Amount)) + "</b>  "
 			line += html.EscapeString(transaction.Description) + "\n<i>"
 			line += html.EscapeString(formatDate(transaction.Date)) + " · "
-			line += html.EscapeString(transaction.ProviderStatus) + "</i>"
+			line += html.EscapeString(transaction.ProviderStatus) + " · "
+			line += html.EscapeString(userCategoryName(transaction)) + "</i>"
 			lines = append(lines, line)
 		}
 	}
@@ -214,6 +216,13 @@ func formatTransactionMessages(
 		}
 	}
 	return splitTelegramMessages(lines)
+}
+
+func userCategoryName(transaction models.Transaction) string {
+	if transaction.UserCategoryName == nil {
+		return "Uncategorized"
+	}
+	return *transaction.UserCategoryName
 }
 
 func formatAmount(amount string) string {

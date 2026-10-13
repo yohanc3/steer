@@ -13,6 +13,10 @@ Polling configuration:
 - `TELLER_SYNC_LOOKBACK_DAYS`: inclusive Teller date overlap, normally `10`.
 - `TELEGRAM_DELIVERY_INTERVAL`: how often settled transactions are drained for notification, for example `30s`.
 - `TELEGRAM_DELIVERY_CONCURRENCY`: batch size and maximum simultaneous Telegram sends, normally `5`.
+- `TYPESAFE_API_KEY`: server-side TypeSafe credential used for Jev transaction categorization.
+- `CATEGORIZATION_INTERVAL`: how often pending transactions are categorized, for example `30s`.
+- `CATEGORIZATION_CONCURRENCY`: batch size and maximum simultaneous Jev calls, normally `5`.
+- `JEV_CONFIDENCE_THRESHOLD`: decisions below this value remain uncategorized, normally `0.75`.
 
 ## Production host
 

@@ -9,6 +9,7 @@ flowchart LR
     Telegram <-->|long polling| API[Go backend]
     Web -->|/api| API
     API <-->|accounts, transactions, balances| Teller[Teller API]
+    API -->|typed category choice| Jev[TypeSafe / Jev]
     API --> DB[(SQLite)]
 
     GitHub[GitHub Actions] --> Registry[GitHub Container Registry]
@@ -35,8 +36,10 @@ flowchart LR
 
 - `bot`: Telegram command handlers and message formatting.
 - `teller`: mutual-TLS Teller client, enrollment verification, token encryption, pagination, and transaction synchronization.
+- `jev`: TypeSafe HTTP client that maps transactions to user-owned category choices.
 - `storage`: SQLite repositories, versioned migrations, and backups.
 - `TransactionPoller`: the in-memory scheduling worker.
+- `TransactionCategorizationWorker`: bounded-concurrency transaction classification and category-memory application.
 - `TransactionDeliveryWorker`: scheduled, bounded-concurrency Telegram notification delivery.
 
 ## Transaction polling
@@ -49,9 +52,19 @@ flowchart LR
 
 The polling queue is intentionally process-local and sequential for the expected private beta of at most 100 users. Restarting the process rebuilds it from SQLite.
 
+## Transaction categorization
+
+1. Users own their category names and descriptions. Categories have stable IDs so a later rename does not invalidate transaction assignments.
+2. New posted transactions begin with `categorization_status=pending`. At startup and every `CATEGORIZATION_INTERVAL`, the worker loads batches of at most `CATEGORIZATION_CONCURRENCY` transactions.
+3. An exact normalized transaction-name rule is applied without an external call. Otherwise, Jev receives the transaction fields and the user's complete category list as one TypeSafe Choice question with an explicit Uncategorized option.
+4. Jev decisions below `JEV_CONFIDENCE_THRESHOLD`, explicit no-match decisions, and API failures are stored as `uncategorized`. They are never forced into a category.
+5. A future user correction assigns the selected transaction, updates existing transactions with the same normalized name, and stores a rule for future matching transactions.
+
+The TypeSafe request uses the API-required rolling Jev alias internally; there is no model configuration. The selected category, confidence, returned model build, probability distribution, and decision source are stored for auditability. Category-management and natural-language commands are a separate layer and are not part of this worker.
+
 ## Telegram notification delivery
 
-1. At startup and every `TELEGRAM_DELIVERY_INTERVAL`, the worker queries non-baseline `settled` transactions oldest-first.
+1. At startup and every `TELEGRAM_DELIVERY_INTERVAL`, the worker queries non-baseline `settled` transactions whose categorization is complete, oldest-first.
 2. Each query returns at most `TELEGRAM_DELIVERY_CONCURRENCY` rows, and the worker sends that batch concurrently before loading the next batch.
 3. A successful Telegram send is conditionally marked `delivered`. A failed send remains `settled`, is skipped for the rest of that cycle, and becomes eligible on the next scheduled cycle.
 4. Baseline transactions remain baseline during overlapping Teller upserts, so historical account data cannot become a new notification.
@@ -62,14 +75,17 @@ Delivery is at-least-once: if Telegram accepts a message but the database update
 
 - `provider_status` stores Teller's lifecycle value, such as `posted`.
 - `delivery_status` is constrained to `settled` or `delivered`.
+- `categorization_status` is constrained to `pending`, `categorized`, or `uncategorized`.
 - A newly inserted posted transaction defaults to `settled`.
 - Re-syncing an existing transaction updates Teller data without resetting an already `delivered` row.
-- Notification delivery is independent from transaction polling and budget recalculation.
+- Teller's category remains separate from the user's category and is never overwritten by Jev or a manual correction.
+- Notification delivery is independent from transaction polling and budget recalculation, but waits for categorization to finish.
 
 ## Data and security
 
 - SQLite is the source of truth and runs versioned migrations during backend startup.
 - Teller access tokens are encrypted with AES-GCM before storage; certificate and signing-key material come from environment configuration.
+- The TypeSafe API key is server-side configuration and is never sent to the browser or stored in SQLite.
 - Teller transaction IDs are primary keys, making overlapping polling windows idempotent.
 - The backend creates periodic SQLite snapshots in the configured backup directory.
 

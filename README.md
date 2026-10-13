@@ -29,7 +29,7 @@ to any of those commands for the complete stored transaction record.
 ## Architecture
 
 Telegram delivers commands to the Go backend, which coordinates Teller Connect,
-Teller transaction/balance APIs, and SQLite storage before returning messages.
+Teller transaction/balance APIs, TypeSafe/Jev categorization, and SQLite storage before returning messages.
 Docker Compose runs the backend, frontend, Nginx gateway, backups, and the
 development ngrok or production TLS deployment layer.
 
@@ -59,7 +59,7 @@ ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
 python3 cmd/deploy/deploy.py
 ```
 
-Fill the Telegram, Teller, certificate, and encryption values in `.env` before
+Fill the Telegram, Teller, TypeSafe, certificate, and encryption values in `.env` before
 starting. The launcher starts ngrok, discovers its assigned HTTPS URL, and then
 hands the terminal to Docker Compose. The gateway is also reachable locally at
 `http://localhost:8080`.

@@ -41,12 +41,13 @@ func TestPrepareLongPollingReportsTelegramFailure(t *testing.T) {
 
 func TestFormatTransactionMessagesAddsReadableAmountDateAndBalance(t *testing.T) {
 	balance := "125.50"
+	category := "Coffee & snacks"
 	messages := formatTransactionMessages(
-		[]models.Transaction{{Amount: "-12.30", Date: "2026-08-06", Description: "Coffee", ProviderStatus: "posted", RunningBalance: &balance}},
+		[]models.Transaction{{Amount: "-12.30", Date: "2026-08-06", Description: "Coffee", ProviderStatus: "posted", RunningBalance: &balance, UserCategoryName: &category}},
 		false,
 		&balance,
 	)
-	for _, expected := range []string{"<b>-$12.30</b>", "Thu, Aug 6th 2026", "<b>Available balance</b>", "$125.50"} {
+	for _, expected := range []string{"<b>-$12.30</b>", "Thu, Aug 6th 2026", "Coffee &amp; snacks", "<b>Available balance</b>", "$125.50"} {
 		if !strings.Contains(messages[0], expected) {
 			t.Fatalf("message missing %q: %s", expected, messages[0])
 		}

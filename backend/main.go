@@ -14,6 +14,7 @@ import (
 
 	applicationbot "yohanc3/steer/bot"
 	"yohanc3/steer/config"
+	"yohanc3/steer/jev"
 	"yohanc3/steer/storage"
 	"yohanc3/steer/teller"
 
@@ -80,6 +81,10 @@ func run(parent context.Context) error {
 		TellerEnvironment:   appConfig.TellerEnvironment,
 		SyncLookbackDays:    appConfig.TellerSyncLookbackDays,
 	}
+	typeSafeClient, err := jev.NewClient(appConfig.TypeSafeAPIKey)
+	if err != nil {
+		return err
+	}
 
 	// Configure Telegram commands before starting long polling.
 	telegramBot, err := applicationbot.New(
@@ -104,6 +109,16 @@ func run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	categorizationWorker, err := NewTransactionCategorizationWorker(
+		repository,
+		typeSafeClient,
+		appConfig.CategorizationInterval,
+		appConfig.CategorizationConcurrency,
+		appConfig.JevConfidenceThreshold,
+	)
+	if err != nil {
+		return err
+	}
 	deliveryWorker, err := NewTransactionDeliveryWorker(
 		repository,
 		applicationbot.TransactionNotifier{Bot: telegramBot},
@@ -117,9 +132,10 @@ func run(parent context.Context) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Start independent Telegram and transaction polling loops before the HTTP listener.
+	// Start independent Telegram, synchronization, categorization, delivery, and backup loops.
 	go telegramBot.Start(ctx)
 	go poller.Run(ctx)
+	go categorizationWorker.Run(ctx)
 	go deliveryWorker.Run(ctx)
 	go backupDatabase(ctx, database, appConfig.DatabaseBackupDirectory, appConfig.DatabaseBackupInterval)
 

@@ -15,6 +15,10 @@ type Config struct {
 	TelegramBotToken            string        `env:"TELEGRAM_BOT_TOKEN,required"`
 	TelegramDeliveryInterval    time.Duration `env:"TELEGRAM_DELIVERY_INTERVAL" envDefault:"30s"`
 	TelegramDeliveryConcurrency int           `env:"TELEGRAM_DELIVERY_CONCURRENCY" envDefault:"5"`
+	TypeSafeAPIKey              string        `env:"TYPESAFE_API_KEY,required"`
+	CategorizationInterval      time.Duration `env:"CATEGORIZATION_INTERVAL" envDefault:"30s"`
+	CategorizationConcurrency   int           `env:"CATEGORIZATION_CONCURRENCY" envDefault:"5"`
+	JevConfidenceThreshold      float64       `env:"JEV_CONFIDENCE_THRESHOLD" envDefault:"0.75"`
 	TellerApplicationID         string        `env:"TELLER_APPLICATION_ID,required"`
 	TellerEnvironment           string        `env:"TELLER_ENVIRONMENT,required"`
 	TellerCertPEM               string        `env:"TELLER_CERT_PEM,required"`
@@ -43,6 +47,15 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.TelegramDeliveryConcurrency <= 0 {
 		return nil, fmt.Errorf("TELEGRAM_DELIVERY_CONCURRENCY must be greater than zero")
+	}
+	if cfg.CategorizationInterval <= 0 {
+		return nil, fmt.Errorf("CATEGORIZATION_INTERVAL must be greater than zero")
+	}
+	if cfg.CategorizationConcurrency <= 0 {
+		return nil, fmt.Errorf("CATEGORIZATION_CONCURRENCY must be greater than zero")
+	}
+	if cfg.JevConfidenceThreshold < 0 || cfg.JevConfidenceThreshold > 1 {
+		return nil, fmt.Errorf("JEV_CONFIDENCE_THRESHOLD must be between zero and one")
 	}
 	if cfg.TellerQueueRefreshInterval <= 0 {
 		return nil, fmt.Errorf("TELLER_QUEUE_REFRESH_INTERVAL must be greater than zero")

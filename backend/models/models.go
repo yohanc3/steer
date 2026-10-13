@@ -62,23 +62,85 @@ const (
 	DeliveryStatusDelivered DeliveryStatus = "delivered"
 )
 
+// CategorizationStatus tracks whether a posted transaction has completed classification.
+type CategorizationStatus string
+
+const (
+	CategorizationStatusPending       CategorizationStatus = "pending"
+	CategorizationStatusCategorized   CategorizationStatus = "categorized"
+	CategorizationStatusUncategorized CategorizationStatus = "uncategorized"
+)
+
+// CategorizationSource records how an assignment was made for audit and policy decisions.
+type CategorizationSource string
+
+const (
+	CategorizationSourceJev          CategorizationSource = "jev"
+	CategorizationSourceJevUncertain CategorizationSource = "jev_uncertain"
+	CategorizationSourceJevError     CategorizationSource = "jev_error"
+	CategorizationSourceMerchantRule CategorizationSource = "merchant_rule"
+	CategorizationSourceUser         CategorizationSource = "user"
+	CategorizationSourceNoCategories CategorizationSource = "no_categories"
+)
+
+// TransactionCategory is one user-owned classification option.
+type TransactionCategory struct {
+	ID          string
+	UserID      UserID
+	Name        string
+	Description string
+}
+
 // Transaction is Teller transaction data normalized for local persistence.
 type Transaction struct {
-	ID               string
-	AccountID        string
-	Amount           string
-	Date             string
-	Description      string
-	ProviderStatus   string
-	DeliveryStatus   DeliveryStatus
-	Type             string
-	RunningBalance   *string
-	ProcessingStatus string
-	Category         *string
-	CounterpartyName *string
-	CounterpartyType *string
-	SelfLink         string
-	AccountLink      string
+	ID                       string
+	AccountID                string
+	Amount                   string
+	Date                     string
+	Description              string
+	ProviderStatus           string
+	DeliveryStatus           DeliveryStatus
+	Type                     string
+	RunningBalance           *string
+	ProcessingStatus         string
+	Category                 *string
+	UserCategoryID           *string
+	UserCategoryName         *string
+	CategorizationStatus     CategorizationStatus
+	CategorizationSource     *CategorizationSource
+	CategorizationConfidence *float64
+	CategorizationModel      *string
+	CounterpartyName         *string
+	CounterpartyType         *string
+	SelfLink                 string
+	AccountLink              string
+}
+
+// CategorizationCandidate is a pending transaction plus any remembered exact-name rule.
+type CategorizationCandidate struct {
+	Transaction          Transaction
+	UserID               UserID
+	RememberedCategoryID *string
+	CreatedAt            int64
+}
+
+// CategoryDecision is a TypeSafe Choice translated back to application category IDs.
+type CategoryDecision struct {
+	CategoryID    *string
+	Confidence    float64
+	Model         string
+	Probabilities map[string]float64
+}
+
+// CategorizationResult is the durable outcome of one categorization attempt.
+type CategorizationResult struct {
+	TransactionID string
+	CategoryID    *string
+	Status        CategorizationStatus
+	Source        CategorizationSource
+	Confidence    *float64
+	Model         *string
+	Probabilities map[string]float64
 }
 
 // TransactionDelivery is one locally settled transaction and its Telegram destination.
